@@ -2,7 +2,7 @@ const http = require('http');
 const { createHash, randomUUID } = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const next = require('next');
+const next = process.env.NODE_ENV !== 'production' ? require('next') : null;
 const Database = require('better-sqlite3');
 const { WebSocketServer } = require('ws');
 
@@ -131,8 +131,8 @@ const STATIC_DIR = path.join(__dirname, '..', 'frontend', 'out');
 const IMAGE_DIR = process.env.NOVA_IMAGE_DIR || path.join(__dirname, 'nova-images');
 const taskRefImages = new Map();
 
-const app = next({ dev: IS_DEV, hostname: HOSTNAME, port: PORT, dir: path.join(__dirname, '..', 'frontend') });
-const handle = app.getRequestHandler();
+const app = IS_DEV ? next({ dev: IS_DEV, hostname: HOSTNAME, port: PORT, dir: path.join(__dirname, '..', 'frontend') }) : null;
+const handle = app ? app.getRequestHandler() : null;
 const db = new Database(DB_PATH);
 const apiKeys = new Map();
 const taskSources = new Map(); // taskId -> { ip, apiKeyHash }
