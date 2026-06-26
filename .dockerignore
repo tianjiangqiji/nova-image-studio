@@ -1,0 +1,14 @@
+node_modules
+frontend/node_modules
+backend/node_modules
+.git
+.gitignore
+*.md
+doc/
+data/
+frontend/out/
+backend/nova-images/
+backend/nova-tasks.sqlite
+backend/nova-tasks.sqlite-wal
+backend/nova-tasks.sqlite-shm
+.env

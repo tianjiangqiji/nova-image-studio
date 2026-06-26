@@ -1,0 +1,13 @@
+services:
+  nova-image-studio:
+    build: .
+    image: nova-image-studio:latest
+    container_name: nova-image-studio
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data/images:/app/backend/nova-images
+      - ./data/nova-tasks.sqlite:/app/backend/nova-tasks.sqlite
+    env_file:
+      - ./backend/.env
+    restart: unless-stopped
