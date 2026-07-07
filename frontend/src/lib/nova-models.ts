@@ -6,6 +6,7 @@ export type BuiltinImagePresetId =
   | 'gemini-2.5-flash-image'
   | 'gemini-3-pro-image-preview'
   | 'gemini-3.1-flash-image-preview'
+  | 'gemini-3.1-flash-lite-image'
   | 'gpt-image-2';
 
 export interface ImageModelConfig {
@@ -76,7 +77,7 @@ export const BUILTIN_IMAGE_PRESETS: Record<BuiltinImagePresetId, BuiltinImagePre
     name: 'Banana Pro',
     modelId: 'gemini-3-pro-image-preview',
     baseUrl: 'https://generativelanguage.googleapis.com',
-    maxRefImages: 11,
+    maxRefImages: 14,
     maxOutputSize: '4K',
     supportsAdvancedParams: false,
   },
@@ -88,6 +89,16 @@ export const BUILTIN_IMAGE_PRESETS: Record<BuiltinImagePresetId, BuiltinImagePre
     baseUrl: 'https://generativelanguage.googleapis.com',
     maxRefImages: 14,
     maxOutputSize: '4K',
+    supportsAdvancedParams: false,
+  },
+  'gemini-3.1-flash-lite-image': {
+    id: 'gemini-3.1-flash-lite-image',
+    protocol: 'google',
+    name: 'Banana 2 Lite',
+    modelId: 'gemini-3.1-flash-lite-image',
+    baseUrl: 'https://generativelanguage.googleapis.com',
+    maxRefImages: 14,
+    maxOutputSize: '1K',
     supportsAdvancedParams: false,
   },
   'gpt-image-2': {

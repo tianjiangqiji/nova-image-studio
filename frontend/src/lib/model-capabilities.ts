@@ -340,7 +340,7 @@ export function getAspectRatioOptions(model: ModelId, outputSize: OutputSize): A
   if (String(presetId).startsWith('gpt-image-2')) {
     return BANANA_ASPECT_RATIOS.map(ar => ({ ...ar, resolution: '' }));
   }
-  if (presetId === 'gemini-3.1-flash-image-preview') {
+  if (presetId === 'gemini-3.1-flash-image-preview' || presetId === 'gemini-3.1-flash-lite-image') {
     return BANANA2_ASPECT_RATIOS.map(ar => ({
       value: ar.value,
       label: ar.label,
@@ -416,6 +416,10 @@ export function isRetryLayoutCompatible(model: ModelId, outputSize: OutputSize, 
 
   if (presetId === 'gemini-3.1-flash-image-preview') {
     return ['512', '1K', '2K', '4K'].includes(outputSize);
+  }
+
+  if (presetId === 'gemini-3.1-flash-lite-image') {
+    return outputSize === '1K';
   }
 
   return outputSize === '1K';
