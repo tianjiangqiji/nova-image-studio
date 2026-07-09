@@ -7,6 +7,7 @@ import {
   type ProviderProtocol,
   type TextModelConfig,
 } from '@/lib/nova-models';
+import type { TextProviderProtocol } from '@/lib/nova-text-protocol';
 
 function trimTrailingSlashes(value: string): string {
   return String(value || '').trim().replace(/\/+$/, '');
@@ -26,6 +27,12 @@ function ensureGoogleBaseUrl(baseUrl: string): string {
 
 export function normalizeModelBaseUrl(protocol: ProviderProtocol, baseUrl: string): string {
   return protocol === 'google'
+    ? ensureGoogleBaseUrl(baseUrl)
+    : ensureOpenAiBaseUrl(baseUrl);
+}
+
+export function normalizeTextModelBaseUrl(protocol: TextProviderProtocol, baseUrl: string): string {
+  return protocol === 'google-gemini'
     ? ensureGoogleBaseUrl(baseUrl)
     : ensureOpenAiBaseUrl(baseUrl);
 }

@@ -1,6 +1,5 @@
 // Agent 模式的浏览器直连客户端
-// 文本对话与视觉描述都打外部 API /v1/responses（与反推提示词一致，不经过自有后端）。
-// 对话请求带 tools，解析文字 delta 与 function_call 事件；描述请求为非流式一次性取全文。
+// 文本对话与视觉描述统一通过 /api/nova/proxy/text，按文本协议动态转发。
 
 import {
   AGENT_TEXT_MODEL_FALLBACK,
@@ -17,7 +16,11 @@ import {
   normalizeGptImageStyle,
   type AgentModelCatalogEntry,
 } from '@/lib/model-capabilities';
-
+import {
+  buildSimpleProxyTextRequestBody,
+  extractTextOutput,
+} from '@/lib/nova-proxy-text';
+import type { TextProviderProtocol } from '@/lib/nova-text-protocol';
 import { readSseStream } from '@/lib/sse-stream-parser';
 
 const AGENT_GPT_REQUEST_MAX_ATTEMPTS = 3;
@@ -39,21 +42,16 @@ export interface AgentCatalogEntry {
 export interface StreamAgentInput {
   apiKey: string;
   model: string;
-  /** 历史消息（不含本轮，需按时间正序传入） */
+  protocol: TextProviderProtocol;
   history: AgentMessage[];
-  /** 当前可用图片目录 */
   catalog: AgentCatalogEntry[];
-  /** 当前可用图像模型目录（供 Agent 选择模型） */
   modelCatalog: AgentModelCatalogEntry[];
-  /** 是否启用联网搜索工具 */
   webSearch?: boolean;
 }
 
 export interface StreamAgentCallbacks {
   onDelta(token: string): void;
-  /** 思考摘要增量（reasoning summary，非原始 CoT） */
   onReasoning(token: string): void;
-  /** 模型完成本回合：fullText 为对话文本，proposal 为解析出的工具调用（无则 null） */
   onDone(fullText: string, proposal: AgentProposal | null): void;
   onRetry?(attempt: number, maxAttempts: number, err: Error): void;
   onResetAttempt?(): void;
@@ -68,7 +66,6 @@ export interface StreamAgentHandle {
 function buildInstructions(catalog: AgentCatalogEntry[], modelCatalog: AgentModelCatalogEntry[]): string {
   let instructions = AGENT_SYSTEM_INSTRUCTIONS;
 
-  // 模型目录
   if (modelCatalog.length > 0) {
     const modelLines = modelCatalog
       .map(m => `- id: ${m.id}, 名称: "${m.name}", 最大分辨率: ${m.maxOutputSize}`)
@@ -78,7 +75,6 @@ function buildInstructions(catalog: AgentCatalogEntry[], modelCatalog: AgentMode
     instructions += '\n\n当前可用图像模型：（空，请在设置中配置）';
   }
 
-  // 图片目录
   if (catalog.length === 0) {
     instructions += '\n\n当前可用图片目录：（空，还没有任何图片）';
   } else {
@@ -99,22 +95,87 @@ function buildInputMessages(history: AgentMessage[]) {
     ));
 }
 
+function buildChatMessages(history: AgentMessage[], instructions: string) {
+  return [
+    { role: 'system' as const, content: instructions },
+    ...history
+      .filter(message => message.role !== 'system-note' && message.role !== 'context-divider' && message.text.trim().length > 0)
+      .map(message => ({
+        role: message.role === 'user' ? 'user' as const : 'assistant' as const,
+        content: message.text,
+      })),
+  ];
+}
+
+function buildAnthropicMessages(history: AgentMessage[]) {
+  return history
+    .filter(message => message.role !== 'system-note' && message.role !== 'context-divider' && message.text.trim().length > 0)
+    .map(message => ({
+      role: message.role === 'user' ? 'user' as const : 'assistant' as const,
+      content: [{ type: 'text' as const, text: message.text }],
+    }));
+}
+
+function buildGeminiContents(history: AgentMessage[], instructions: string) {
+  const contents: Array<{ role: 'user' | 'model'; parts: Array<Record<string, unknown>> }> = [
+    { role: 'user', parts: [{ text: instructions }] },
+  ];
+  for (const message of history) {
+    if (message.role === 'system-note' || message.role === 'context-divider' || message.text.trim().length === 0) continue;
+    contents.push({
+      role: message.role === 'user' ? 'user' : 'model',
+      parts: [{ text: message.text }],
+    });
+  }
+  return contents;
+}
+
 interface ResponsesEventEnvelope {
   type?: string;
   delta?: string;
   text?: string;
   arguments?: string;
-  item?: {
-    type?: string;
-    name?: string;
-    arguments?: string;
-  };
+  item?: { type?: string; name?: string; arguments?: string };
   response?: {
     output_text?: string;
     output?: Array<{ type?: string; name?: string; arguments?: string }>;
   };
   error?: { message?: string };
   message?: string;
+}
+
+interface ChatCompletionsEventEnvelope {
+  choices?: Array<{
+    delta?: {
+      content?: string | Array<{ type?: string; text?: string }>;
+      tool_calls?: Array<{
+        index?: number;
+        function?: { arguments?: string };
+      }>;
+    };
+    message?: {
+      content?: string | Array<{ type?: string; text?: string }>;
+      tool_calls?: Array<{ function?: { arguments?: string } }>;
+    };
+  }>;
+  error?: { message?: string };
+  message?: string;
+}
+
+interface MessagesEventEnvelope {
+  type?: string;
+  index?: number;
+  content_block?: {
+    type?: string;
+    text?: string;
+    input?: unknown;
+  };
+  delta?: {
+    text?: string;
+    partial_json?: string;
+  };
+  error?: { message?: string };
+  message?: { content?: Array<{ type?: string; text?: string; input?: unknown }> };
 }
 
 function normalizeAction(value: unknown): AgentActionType {
@@ -233,23 +294,14 @@ async function runAgentStream(
   callbacks: StreamAgentCallbacks,
   signal: AbortSignal,
 ): Promise<void> {
-  const body = {
-    model: input.model || AGENT_TEXT_MODEL_FALLBACK,
-    stream: true,
-    reasoning: { effort: 'medium' as const, summary: 'detailed' as const },
-    instructions: buildInstructions(input.catalog, input.modelCatalog),
-    tools: input.webSearch
-      ? [PROPOSE_IMAGE_ACTION_TOOL, { type: 'web_search' as const }]
-      : [PROPOSE_IMAGE_ACTION_TOOL],
-    tool_choice: 'auto' as const,
-    input: buildInputMessages(input.history),
-  };
+  const instructions = buildInstructions(input.catalog, input.modelCatalog);
+  const body = buildAgentRequestBody(input.protocol, input.model || AGENT_TEXT_MODEL_FALLBACK, input.history, instructions, Boolean(input.webSearch));
 
   const response = await fetch('/api/nova/proxy/text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      protocol: 'openai',
+      protocol: input.protocol,
       baseUrl,
       apiKey: input.apiKey,
       model: input.model,
@@ -269,6 +321,7 @@ async function runAgentStream(
   let accumulated = '';
   let toolArgs = '';
   let fired = false;
+  const toolArgsByIndex = new Map<number, string>();
 
   const fireDone = () => {
     if (fired) return;
@@ -283,105 +336,36 @@ async function runAgentStream(
       return;
     }
 
-    let payload: ResponsesEventEnvelope;
+    let payload: ResponsesEventEnvelope | ChatCompletionsEventEnvelope | MessagesEventEnvelope | Record<string, unknown>;
     try {
-      payload = JSON.parse(event.data) as ResponsesEventEnvelope;
+      payload = JSON.parse(event.data);
     } catch {
       return;
     }
 
-    const eventType = payload.type || event.event || '';
-
-    if (eventType === 'response.reasoning_summary_text.delta') {
-      const delta = typeof payload.delta === 'string' ? payload.delta : '';
-      if (delta) callbacks.onReasoning(delta);
-      return;
-    }
-
-    if (eventType === 'response.reasoning_summary_part.added') {
-      // 多段思考之间补一个换行，避免粘连
-      callbacks.onReasoning('\n');
-      return;
-    }
-
-    if (eventType === 'response.output_text.delta') {
-      const delta = typeof payload.delta === 'string' ? payload.delta : '';
-      if (delta) {
-        accumulated += delta;
-        callbacks.onDelta(delta);
-      }
-      return;
-    }
-
-    if (eventType === 'response.output_text.done') {
-      if (typeof payload.text === 'string' && payload.text.length > accumulated.length) {
-        const tail = payload.text.slice(accumulated.length);
-        if (tail) {
-          accumulated = payload.text;
-          callbacks.onDelta(tail);
-        }
-      }
-      return;
-    }
-
-    if (eventType === 'response.function_call_arguments.delta') {
-      if (typeof payload.delta === 'string') {
-        toolArgs += payload.delta;
-      }
-      return;
-    }
-
-    if (eventType === 'response.function_call_arguments.done') {
-      if (typeof payload.arguments === 'string' && payload.arguments.length > 0) {
-        toolArgs = payload.arguments;
-      }
-      return;
-    }
-
-    if (eventType === 'response.output_item.done') {
-      if (payload.item?.type === 'function_call' && typeof payload.item.arguments === 'string' && payload.item.arguments.length > 0) {
-        toolArgs = payload.item.arguments;
-      }
-      return;
-    }
-
-    if (eventType === 'response.completed') {
-      const fullText = payload.response?.output_text;
-      if (typeof fullText === 'string' && fullText.length > accumulated.length) {
-        const tail = fullText.slice(accumulated.length);
-        if (tail) {
-          accumulated = fullText;
-          callbacks.onDelta(tail);
-        }
-      }
-      const call = payload.response?.output?.find(item => item.type === 'function_call' && typeof item.arguments === 'string');
-      if (call?.arguments && toolArgs.trim().length === 0) {
-        toolArgs = call.arguments;
-      }
-      fireDone();
-      return;
-    }
-
-    if (eventType === 'error' || eventType === 'response.error') {
-      const message = payload.error?.message || payload.message || '模型返回错误';
-      throw new Error(message);
-    }
+    handleAgentStreamEvent(input.protocol, payload, event.event || '', callbacks, {
+      accumulated,
+      setAccumulated: next => { accumulated = next; },
+      toolArgs,
+      setToolArgs: next => { toolArgs = next; },
+      toolArgsByIndex,
+      fireDone,
+    });
   });
 
   fireDone();
 }
 
-// ===== 非流式视觉描述 =====
-
 export async function describeImage(
   apiKey: string,
   model: string,
+  protocol: TextProviderProtocol,
   imageDataUrl: string,
   signal?: AbortSignal,
   baseUrl: string = '',
 ): Promise<string> {
   return runAgentRequestWithRetry(
-    attemptSignal => requestImageDescription(baseUrl, apiKey, model, imageDataUrl, attemptSignal),
+    attemptSignal => requestImageDescription(baseUrl, apiKey, model, protocol, imageDataUrl, attemptSignal),
     signal,
     AGENT_IMAGE_DESCRIBE_ATTEMPT_TIMEOUT_MS,
   );
@@ -391,29 +375,25 @@ async function requestImageDescription(
   baseUrl: string,
   apiKey: string,
   model: string,
+  protocol: TextProviderProtocol,
   imageDataUrl: string,
   signal: AbortSignal,
 ): Promise<string> {
-  const body = {
-    model: model || AGENT_TEXT_MODEL_FALLBACK,
-    stream: false,
-    reasoning: { effort: 'low' as const },
-    input: [
-      {
-        role: 'user',
-        content: [
-          { type: 'input_text', text: AGENT_IMAGE_DESCRIBE_PROMPT },
-          { type: 'input_image', image_url: imageDataUrl },
-        ],
-      },
+  const body = buildSimpleProxyTextRequestBody(
+    protocol,
+    model || AGENT_TEXT_MODEL_FALLBACK,
+    [
+      { type: 'text', text: AGENT_IMAGE_DESCRIBE_PROMPT },
+      { type: 'image', imageDataUrl },
     ],
-  };
+    { reasoningEffort: 'low' }
+  );
 
   const response = await fetch('/api/nova/proxy/text', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      protocol: 'openai',
+      protocol,
       baseUrl,
       apiKey,
       model,
@@ -427,28 +407,273 @@ async function requestImageDescription(
     throw await readHttpError(response);
   }
 
-  const data = await response.json().catch(() => null) as {
-    output_text?: string;
-    output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
-  } | null;
-
+  const data = await response.json().catch(() => null);
   if (!data) return '';
-
-  if (typeof data.output_text === 'string' && data.output_text.trim().length > 0) {
-    return data.output_text.trim();
-  }
-
-  const fromOutput = data.output
-    ?.flatMap(item => item.content || [])
-    .filter(part => part.type === 'output_text' && typeof part.text === 'string')
-    .map(part => part.text as string)
-    .join('')
-    .trim();
-
-  return fromOutput || '';
+  return extractTextOutput(protocol, data).trim();
 }
 
-// ===== 工具函数 =====
+function buildAgentRequestBody(
+  protocol: TextProviderProtocol,
+  model: string,
+  history: AgentMessage[],
+  instructions: string,
+  enableNativeWebSearch: boolean,
+) {
+  if (protocol === 'openai-chat-completions') {
+    return {
+      model,
+      stream: true,
+      messages: buildChatMessages(history, instructions),
+      tools: [
+        {
+          type: 'function' as const,
+          function: {
+            name: PROPOSE_IMAGE_ACTION_TOOL.name,
+            description: PROPOSE_IMAGE_ACTION_TOOL.description,
+            parameters: PROPOSE_IMAGE_ACTION_TOOL.parameters,
+          },
+        },
+      ],
+      tool_choice: 'auto' as const,
+    };
+  }
+
+  if (protocol === 'anthropic-messages') {
+    return {
+      model,
+      stream: true,
+      max_tokens: 4096,
+      system: instructions,
+      messages: buildAnthropicMessages(history),
+      tools: [
+        {
+          name: PROPOSE_IMAGE_ACTION_TOOL.name,
+          description: PROPOSE_IMAGE_ACTION_TOOL.description,
+          input_schema: PROPOSE_IMAGE_ACTION_TOOL.parameters,
+        },
+        ...(enableNativeWebSearch ? [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }] : []),
+      ],
+    };
+  }
+
+  if (protocol === 'google-gemini') {
+    return {
+      contents: buildGeminiContents(history, instructions),
+      tools: [
+        {
+          function_declarations: [
+            {
+              name: PROPOSE_IMAGE_ACTION_TOOL.name,
+              description: PROPOSE_IMAGE_ACTION_TOOL.description,
+              parameters: PROPOSE_IMAGE_ACTION_TOOL.parameters,
+            },
+          ],
+        },
+        ...(enableNativeWebSearch ? [{ google_search: {} }] : []),
+      ],
+      generationConfig: {
+        thinkingConfig: {
+          thinkingBudget: -1,
+          includeThoughts: false,
+        },
+      },
+    };
+  }
+
+  return {
+    model,
+    stream: true,
+    reasoning: { effort: 'medium' as const, summary: 'detailed' as const },
+    instructions,
+    tools: enableNativeWebSearch
+      ? [PROPOSE_IMAGE_ACTION_TOOL, { type: 'web_search' as const }]
+      : [PROPOSE_IMAGE_ACTION_TOOL],
+    tool_choice: 'auto' as const,
+    input: buildInputMessages(history),
+  };
+}
+
+function handleAgentStreamEvent(
+  protocol: TextProviderProtocol,
+  payload: ResponsesEventEnvelope | ChatCompletionsEventEnvelope | MessagesEventEnvelope | Record<string, unknown>,
+  rawEventType: string,
+  callbacks: StreamAgentCallbacks,
+  state: {
+    accumulated: string;
+    setAccumulated: (value: string) => void;
+    toolArgs: string;
+    setToolArgs: (value: string) => void;
+    toolArgsByIndex: Map<number, string>;
+    fireDone: () => void;
+  },
+) {
+  if (protocol === 'openai-chat-completions') {
+    const chunk = payload as ChatCompletionsEventEnvelope;
+    if (rawEventType === 'error' || chunk.error?.message) {
+      throw new Error(chunk.error?.message || chunk.message || '模型返回错误');
+    }
+    const choice = chunk.choices?.[0];
+    if (!choice) return;
+
+    const deltaContent = choice.delta?.content;
+    const textDelta = typeof deltaContent === 'string'
+      ? deltaContent
+      : Array.isArray(deltaContent)
+        ? deltaContent.filter(part => part.type === 'text' && typeof part.text === 'string').map(part => part.text).join('')
+        : '';
+    if (textDelta) {
+      state.setAccumulated(state.accumulated + textDelta);
+      callbacks.onDelta(textDelta);
+    }
+
+    for (const toolCall of choice.delta?.tool_calls || []) {
+      const index = typeof toolCall.index === 'number' ? toolCall.index : 0;
+      const fragment = toolCall.function?.arguments || '';
+      if (!fragment) continue;
+      const next = `${state.toolArgsByIndex.get(index) || ''}${fragment}`;
+      state.toolArgsByIndex.set(index, next);
+      state.setToolArgs(next);
+    }
+
+    for (const toolCall of choice.message?.tool_calls || []) {
+      const fullArgs = toolCall.function?.arguments;
+      if (typeof fullArgs === 'string' && fullArgs.length > 0) {
+        state.setToolArgs(fullArgs);
+      }
+    }
+    return;
+  }
+
+  if (protocol === 'anthropic-messages') {
+    const chunk = payload as MessagesEventEnvelope;
+    const eventType = chunk.type || rawEventType || '';
+    if (eventType === 'content_block_start') {
+      if (chunk.content_block?.type === 'text' && typeof chunk.content_block.text === 'string') {
+        state.setAccumulated(state.accumulated + chunk.content_block.text);
+        callbacks.onDelta(chunk.content_block.text);
+      }
+      if (chunk.content_block?.type === 'tool_use' && chunk.content_block.input && typeof chunk.index === 'number') {
+        const serialized = JSON.stringify(chunk.content_block.input);
+        state.toolArgsByIndex.set(chunk.index, serialized);
+        state.setToolArgs(serialized);
+      }
+      return;
+    }
+    if (eventType === 'content_block_delta') {
+      if (typeof chunk.delta?.text === 'string') {
+        state.setAccumulated(state.accumulated + chunk.delta.text);
+        callbacks.onDelta(chunk.delta.text);
+      }
+      if (typeof chunk.delta?.partial_json === 'string') {
+        const index = typeof chunk.index === 'number' ? chunk.index : 0;
+        const next = `${state.toolArgsByIndex.get(index) || ''}${chunk.delta.partial_json}`;
+        state.toolArgsByIndex.set(index, next);
+        state.setToolArgs(next);
+      }
+      return;
+    }
+    if (eventType === 'message_stop') {
+      const finalTool = chunk.message?.content?.find(part => part.type === 'tool_use' && part.input);
+      if (finalTool?.input && state.toolArgs.trim().length === 0) {
+        state.setToolArgs(JSON.stringify(finalTool.input));
+      }
+      state.fireDone();
+      return;
+    }
+    if (eventType === 'error') {
+      throw new Error(chunk.error?.message || '模型返回错误');
+    }
+    return;
+  }
+
+  if (protocol === 'google-gemini') {
+    const chunk = payload as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string; thought?: boolean; functionCall?: { name?: string; args?: unknown } }> } }>;
+      error?: { message?: string };
+    };
+    if (chunk.error?.message) throw new Error(chunk.error.message);
+    for (const candidate of chunk.candidates || []) {
+      for (const part of candidate.content?.parts || []) {
+        if (part.thought === true) continue;
+        if (typeof part.text === 'string' && part.text.length > 0) {
+          state.setAccumulated(state.accumulated + part.text);
+          callbacks.onDelta(part.text);
+        }
+        if (part.functionCall?.name === PROPOSE_IMAGE_ACTION_TOOL.name && part.functionCall.args) {
+          state.setToolArgs(JSON.stringify(part.functionCall.args));
+        }
+      }
+    }
+    return;
+  }
+
+  const chunk = payload as ResponsesEventEnvelope;
+  const eventType = chunk.type || rawEventType || '';
+  if (eventType === 'response.reasoning_summary_text.delta') {
+    const delta = typeof chunk.delta === 'string' ? chunk.delta : '';
+    if (delta) callbacks.onReasoning(delta);
+    return;
+  }
+  if (eventType === 'response.reasoning_summary_part.added') {
+    callbacks.onReasoning('\n');
+    return;
+  }
+  if (eventType === 'response.output_text.delta') {
+    const delta = typeof chunk.delta === 'string' ? chunk.delta : '';
+    if (delta) {
+      state.setAccumulated(state.accumulated + delta);
+      callbacks.onDelta(delta);
+    }
+    return;
+  }
+  if (eventType === 'response.output_text.done') {
+    if (typeof chunk.text === 'string' && chunk.text.length > state.accumulated.length) {
+      const tail = chunk.text.slice(state.accumulated.length);
+      if (tail) {
+        state.setAccumulated(chunk.text);
+        callbacks.onDelta(tail);
+      }
+    }
+    return;
+  }
+  if (eventType === 'response.function_call_arguments.delta') {
+    if (typeof chunk.delta === 'string') {
+      state.setToolArgs(state.toolArgs + chunk.delta);
+    }
+    return;
+  }
+  if (eventType === 'response.function_call_arguments.done') {
+    if (typeof chunk.arguments === 'string' && chunk.arguments.length > 0) {
+      state.setToolArgs(chunk.arguments);
+    }
+    return;
+  }
+  if (eventType === 'response.output_item.done') {
+    if (chunk.item?.type === 'function_call' && typeof chunk.item.arguments === 'string' && chunk.item.arguments.length > 0) {
+      state.setToolArgs(chunk.item.arguments);
+    }
+    return;
+  }
+  if (eventType === 'response.completed') {
+    const fullText = chunk.response?.output_text;
+    if (typeof fullText === 'string' && fullText.length > state.accumulated.length) {
+      const tail = fullText.slice(state.accumulated.length);
+      if (tail) {
+        state.setAccumulated(fullText);
+        callbacks.onDelta(tail);
+      }
+    }
+    const call = chunk.response?.output?.find(item => item.type === 'function_call' && typeof item.arguments === 'string');
+    if (call?.arguments && state.toolArgs.trim().length === 0) {
+      state.setToolArgs(call.arguments);
+    }
+    state.fireDone();
+    return;
+  }
+  if (eventType === 'error' || eventType === 'response.error') {
+    throw new Error(chunk.error?.message || chunk.message || '模型返回错误');
+  }
+}
 
 function createAttemptSignal(parentSignal?: AbortSignal): {
   signal: AbortSignal;
@@ -534,7 +759,7 @@ async function readHttpError(response: Response): Promise<Error> {
         return new Error(`${response.status} ${response.statusText}: ${message}`);
       }
     } catch {
-      // 不是 JSON
+      // ignore
     }
   }
   return new Error(`${response.status} ${response.statusText}${detail ? `: ${detail.slice(0, 500)}` : ''}`);

@@ -494,7 +494,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     setOptimizeOpen(true);
 
     const handle = streamPromptOptimize(
-      { apiKey: textModel.apiKey, mode: 'agent', prompt: text, context: context || undefined },
+      { apiKey: textModel.apiKey, model: textModel.id, mode: 'agent', prompt: text, context: context || undefined },
       {
         onDelta(token) { setOptimizedText(prev => prev + token); },
         onDone() { setOptimizing(false); },
@@ -890,23 +890,24 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             <span className="text-xs">存提示词</span>
           </Button>
 
-          {/* 联网检索 */}
-          <Button
-            variant={agent.webSearchEnabled ? 'default' : 'ghost'}
-            size="sm"
-            className={cn(
-              'shrink-0 gap-1.5',
-              agent.webSearchEnabled
-                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
-                : 'text-muted-foreground'
-            )}
-            onClick={() => agent.toggleWebSearch()}
-            disabled={busy || disabled}
-            title={agent.webSearchEnabled ? '已开启联网搜索' : '联网搜索'}
-          >
-            <Globe className="h-4 w-4" />
-            <span className="text-xs">联网检索</span>
-          </Button>
+          {agent.agentSupportsWebSearch && (
+            <Button
+              variant={agent.webSearchEnabled ? 'default' : 'ghost'}
+              size="sm"
+              className={cn(
+                'shrink-0 gap-1.5',
+                agent.webSearchEnabled
+                  ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                  : 'text-muted-foreground'
+              )}
+              onClick={() => agent.toggleWebSearch()}
+              disabled={busy || disabled}
+              title={agent.webSearchEnabled ? '已开启联网搜索' : '联网搜索'}
+            >
+              <Globe className="h-4 w-4" />
+              <span className="text-xs">联网检索</span>
+            </Button>
+          )}
 
           {/* 意图识别开关 */}
           <Button

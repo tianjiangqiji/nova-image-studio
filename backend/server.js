@@ -86,7 +86,7 @@ function normalizeBaseUrl(url) {
 function normalizeProtocolBaseUrl(protocol, url) {
   const normalized = normalizeBaseUrl(url);
   if (!normalized) return '';
-  if (protocol === 'google') {
+  if (protocol === 'google' || protocol === 'google-gemini') {
     return normalized.endsWith('/v1beta') ? normalized.slice(0, -7) : normalized;
   }
   return normalized.endsWith('/v1') ? normalized.slice(0, -3) : normalized;
@@ -1584,7 +1584,7 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
-    // ===== 文本 AI 代理（流式 + 非流式，OpenAI / Google 协议） =====
+    // ===== 文本 AI 代理（流式 + 非流式，多文本协议） =====
     if (req.method === 'POST' && apiPathname === '/api/nova/proxy/text') {
       try {
         const body = await readJsonBody(req);
@@ -1598,9 +1598,18 @@ async function handleApi(req, res, pathname) {
         let targetUrl;
         const authHeaders = { 'Content-Type': 'application/json' };
 
-        if (protocol === 'google') {
-          targetUrl = `${normalizedBaseUrl}/v1beta/models/${encodeURIComponent(model || '')}:streamGenerateContent?alt=sse`;
+        if (protocol === 'google' || protocol === 'google-gemini') {
+          targetUrl = stream
+            ? `${normalizedBaseUrl}/v1beta/models/${encodeURIComponent(model || '')}:streamGenerateContent?alt=sse`
+            : `${normalizedBaseUrl}/v1beta/models/${encodeURIComponent(model || '')}:generateContent`;
           authHeaders['x-goog-api-key'] = apiKey;
+          authHeaders['Authorization'] = `Bearer ${apiKey}`;
+        } else if (protocol === 'anthropic-messages') {
+          targetUrl = `${normalizedBaseUrl}/v1/messages`;
+          authHeaders['x-api-key'] = apiKey;
+          authHeaders['anthropic-version'] = '2023-06-01';
+        } else if (protocol === 'openai-chat-completions') {
+          targetUrl = `${normalizedBaseUrl}/v1/chat/completions`;
           authHeaders['Authorization'] = `Bearer ${apiKey}`;
         } else {
           targetUrl = `${normalizedBaseUrl}/v1/responses`;
@@ -1664,7 +1673,7 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
-    // ===== 模型检查代理（统一使用 /v1/models） =====
+    // ===== 模型检查代理（按协议查询模型列表） =====
     if (req.method === 'GET' && apiPathname === '/api/nova/proxy/models') {
       try {
         const parsed = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
@@ -1677,10 +1686,19 @@ async function handleApi(req, res, pathname) {
         }
 
         const normalizedBaseUrl = normalizeProtocolBaseUrl(protocol, baseUrl);
-        const modelsUrl = `${normalizedBaseUrl}/v1/models`;
-        // 模型列表查询只发送 Authorization 头。x-goog-api-key 仅用于 Gemini 生成端点，
-        // 对 /v1/models (兼容 OpenAI 格式的 NewAPI 等) 会引发错误或返回空列表。
-        const headers = { Authorization: `Bearer ${apiKey}` };
+        let modelsUrl = `${normalizedBaseUrl}/v1/models`;
+        const headers = {};
+
+        if (protocol === 'google' || protocol === 'google-gemini') {
+          modelsUrl = `${normalizedBaseUrl}/v1beta/models`;
+          headers['x-goog-api-key'] = apiKey;
+          headers['Authorization'] = `Bearer ${apiKey}`;
+        } else if (protocol === 'anthropic-messages') {
+          headers['x-api-key'] = apiKey;
+          headers['anthropic-version'] = '2023-06-01';
+        } else {
+          headers['Authorization'] = `Bearer ${apiKey}`;
+        }
 
         const response = await fetchWithTimeout(modelsUrl, { method: 'GET', headers });
         let data = null;

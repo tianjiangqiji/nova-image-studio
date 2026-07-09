@@ -164,7 +164,7 @@ export function ImageToImageForm({
 
     const images = pendingFiles.map(f => ({ dataUrl: f.dataUrl, mimeType: f.mimeType }));
     const handle = streamPromptOptimize(
-      { apiKey: textModel.apiKey, mode: 'image-to-image', prompt: prompt.trim(), images },
+      { apiKey: textModel.apiKey, model: textModel.id, mode: 'image-to-image', prompt: prompt.trim(), images },
       {
         onDelta(token) { setOptimizedText(prev => prev + token); },
         onDone() { setOptimizing(false); },

@@ -107,7 +107,7 @@ export function TextToImageForm({ onSubmit, disabled = false, onDraftConsumed, o
     setOptimizeOpen(true);
 
     const handle = streamPromptOptimize(
-      { apiKey: textModel.apiKey, mode: 'text-to-image', prompt: prompt.trim() },
+      { apiKey: textModel.apiKey, model: textModel.id, mode: 'text-to-image', prompt: prompt.trim() },
       {
         onDelta(token) {
           setOptimizedText(prev => prev + token);

@@ -246,7 +246,7 @@ export function ImageGenerationWorkbench({
 
     const images = pendingFiles.map(f => ({ dataUrl: f.dataUrl, mimeType: f.mimeType }));
     const handle = streamPromptOptimize(
-      { apiKey: textModel.apiKey, mode: currentMode, prompt: prompt.trim(), ...(images.length > 0 ? { images } : {}) },
+      { apiKey: textModel.apiKey, model: textModel.id, mode: currentMode, prompt: prompt.trim(), ...(images.length > 0 ? { images } : {}) },
       {
         onDelta(token) { setOptimizedText(prev => prev + token); },
         onDone() { setOptimizing(false); },

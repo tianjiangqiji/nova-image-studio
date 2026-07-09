@@ -39,6 +39,7 @@ import { PromptOptimizeDialog } from "@/components/PromptOptimizeDialog";
 import { AiTextGenerateDialog } from "./components/canvas-ai-text-dialog";
 import { streamPromptOptimize, type StreamPromptOptimizeHandle, type OptimizeImageInput } from "@/lib/prompt-optimize-client";
 import { requireDefaultConfiguredTextModel } from "@/lib/model-endpoints";
+import { buildSimpleProxyTextRequestBody, handleSimpleTextStreamEvent } from "@/lib/nova-proxy-text";
 import { readSseStream } from "@/lib/sse-stream-parser";
 import { MODEL_IMAGE_LIMITS } from "@/lib/gemini-config";
 import { normalizeModel } from "@/lib/model-capabilities";
@@ -187,6 +188,7 @@ async function optimizeImportedPromptContent(prompt: PromptWithKey, referenceIma
   const handle = streamPromptOptimize(
     {
       apiKey: textModel.apiKey,
+      model: textModel.id,
       mode: "canvas-prompt-gallery-import",
       prompt: original,
       context: `当前模板包含 ${referenceImageCount} 张参考图。画布会在生成配置里单独放置模板参考图，并用“目标角色图”单独指定用户上传的目标角色/OC图。`,
@@ -1333,18 +1335,18 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
 
     try {
       const systemPrompt = buildAiTextSystemPrompt(aiTextOriginal);
-      const body = {
-        model: textModel.modelId,
-        stream: true,
-        reasoning: { effort: "low" },
-        input: [{ role: "user", content: [{ type: "input_text" as const, text: `${systemPrompt}\n\n---\n\n用户输入：\n${prompt}` }] }],
-      };
+      const body = buildSimpleProxyTextRequestBody(
+        textModel.protocol,
+        textModel.modelId,
+        [{ type: "text", text: `用户输入：\n${prompt}` }],
+        { stream: true, systemInstruction: systemPrompt, reasoningEffort: "low" }
+      );
 
       const response = await fetch("/api/nova/proxy/text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          protocol: "openai",
+          protocol: textModel.protocol,
           baseUrl: textModel.baseUrl,
           apiKey: textModel.apiKey,
           model: textModel.modelId,
@@ -1361,24 +1363,16 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
 
       await readSseStream(response.body, controller.signal, (event) => {
         if (!event.data || event.data === "[DONE]") return;
-        let payload: any;
+        let payload: Record<string, unknown>;
         try { payload = JSON.parse(event.data); } catch { return; }
-        const eventType = payload.type || event.event || "";
-
-        if (eventType === "response.output_text.delta") {
-          const delta = typeof payload.delta === "string" ? payload.delta : "";
-          if (delta) {
-            accumulated += delta;
-            setAiTextGenerated(accumulated);
-          }
-        }
-        if (eventType === "response.completed") {
-          const fullText = payload.response?.output_text;
-          if (typeof fullText === "string" && fullText.length > accumulated.length) {
-            accumulated = fullText;
-            setAiTextGenerated(accumulated);
-          }
-        }
+        accumulated = handleSimpleTextStreamEvent(
+          textModel.protocol,
+          payload,
+          event.event || "",
+          accumulated,
+          (delta) => setAiTextGenerated((prev) => prev + delta),
+          () => undefined
+        );
       });
 
       if (controller.signal.aborted) return;
@@ -1442,18 +1436,18 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
 
       try {
         const systemPrompt = buildAiTextSystemPrompt(existingContent);
-        const body = {
-          model: textModel.modelId,
-          stream: true,
-          reasoning: { effort: "low" },
-          input: [{ role: "user", content: [{ type: "input_text" as const, text: `${systemPrompt}\n\n---\n\n用户输入：\n${userPrompt}` }] }],
-        };
+        const body = buildSimpleProxyTextRequestBody(
+          textModel.protocol,
+          textModel.modelId,
+          [{ type: "text", text: `用户输入：\n${userPrompt}` }],
+          { stream: true, systemInstruction: systemPrompt, reasoningEffort: "low" }
+        );
 
         const response = await fetch("/api/nova/proxy/text", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            protocol: "openai",
+            protocol: textModel.protocol,
             baseUrl: textModel.baseUrl,
             apiKey: textModel.apiKey,
             model: textModel.modelId,
@@ -1470,26 +1464,21 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
 
         await readSseStream(response.body, controller.signal, (event) => {
           if (!event.data || event.data === "[DONE]") return;
-          let payload: any;
+          let payload: Record<string, unknown>;
           try { payload = JSON.parse(event.data); } catch { return; }
-          const eventType = payload.type || event.event || "";
-
-          if (eventType === "response.output_text.delta") {
-            const delta = typeof payload.delta === "string" ? payload.delta : "";
-            if (delta) {
-              accumulated += delta;
+          accumulated = handleSimpleTextStreamEvent(
+            textModel.protocol,
+            payload,
+            event.event || "",
+            accumulated,
+            (delta) => {
               patchNode(nodeId, (n) => ({
                 ...n,
-                metadata: { ...n.metadata, streamPreview: accumulated },
+                metadata: { ...n.metadata, streamPreview: `${n.metadata?.streamPreview || ""}${delta}` },
               }));
-            }
-          }
-          if (eventType === "response.completed") {
-            const fullText = payload.response?.output_text;
-            if (typeof fullText === "string" && fullText.length > accumulated.length) {
-              accumulated = fullText;
-            }
-          }
+            },
+            () => undefined
+          );
         });
 
         if (controller.signal.aborted) return;
@@ -1578,7 +1567,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         ].filter(Boolean).join("\n\n") || undefined;
 
         optimizeHandleRef.current = streamPromptOptimize(
-          { apiKey: textModel.apiKey, mode, prompt: promptText, images, context },
+          { apiKey: textModel.apiKey, model: textModel.id, mode, prompt: promptText, images, context },
           {
             onDelta(token) { setOptimizedText((prev) => prev + token); },
             onDone() { setOptimizing(false); },

@@ -585,7 +585,7 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
       const suggestion = await generateAssetMetadata({
         apiKey: textModel.apiKey,
         baseUrl: textModel.baseUrl,
-        model: textModel.modelId,
+        model: textModel.id,
         imageDataUrl,
         currentName: editName,
         currentTags: splitTags(editTags),

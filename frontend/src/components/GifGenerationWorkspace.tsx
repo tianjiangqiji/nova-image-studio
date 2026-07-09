@@ -116,7 +116,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
 
     const images = refFiles.map(f => ({ dataUrl: f.dataUrl, mimeType: f.mimeType }));
     const handle = streamPromptOptimize(
-      { apiKey: textModel.apiKey, mode: 'gif', prompt: prompt.trim(), images },
+      { apiKey: textModel.apiKey, model: textModel.id, mode: 'gif', prompt: prompt.trim(), images },
       {
         onDelta(token) { setOptimizedText(prev => prev + token); },
         onDone() { setOptimizing(false); },

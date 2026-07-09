@@ -44,6 +44,7 @@ import {
   type PendingGenerationData,
 } from '@/lib/agent-context-store';
 import { getDefaultConfiguredTextModel } from '@/lib/model-endpoints';
+import { supportsAgentNativeWebSearch } from '@/lib/nova-text-protocol';
 
 export type AgentPhase = 'idle' | 'loading' | 'describing' | 'streaming' | 'proposal' | 'generating';
 
@@ -216,11 +217,13 @@ export function useAgentChat() {
     if (!configured?.apiKey || !configured.baseUrl || !configured.modelId) {
       throw new Error('请先在设置中完成 Agent 默认文本模型配置');
     }
-    if (configured.protocol !== 'openai') {
-      throw new Error('当前 Agent 仅支持 OpenAI Response 文本模型');
-    }
     return configured;
   }, []);
+
+  const agentSupportsWebSearch = useCallback(() => {
+    const configured = getAgentTextModelConfig();
+    return supportsAgentNativeWebSearch(configured.protocol);
+  }, [getAgentTextModelConfig]);
 
   // ===== 流式更新批处理（rAF 节流） =====
   const streamingTextBufRef = useRef('');
@@ -347,6 +350,7 @@ export function useAgentChat() {
       description = await describeImage(
         configured.apiKey,
         configured.modelId,
+        configured.protocol,
         previewDataUrl,
         describeSignal,
         configured.baseUrl,
@@ -379,6 +383,7 @@ export function useAgentChat() {
     const newDescription = await describeImage(
       configured.apiKey,
       configured.modelId,
+      configured.protocol,
       record.thumbnail,
       undefined,
       configured.baseUrl,
@@ -404,8 +409,9 @@ export function useAgentChat() {
       {
         apiKey: configured.apiKey,
         model: configured.modelId,
+        protocol: configured.protocol,
         history,
-        webSearch: webSearchEnabled,
+        webSearch: webSearchEnabled && supportsAgentNativeWebSearch(configured.protocol),
         catalog: catalog.map(img => ({ imgId: img.imgId, description: img.description })),
         modelCatalog,
       },
@@ -943,12 +949,13 @@ export function useAgentChat() {
   }, []);
 
   const toggleWebSearch = useCallback(() => {
+    if (!agentSupportsWebSearch()) return;
     setWebSearchEnabled(prev => {
       const next = !prev;
       try { localStorage.setItem('nova-agent-web-search', String(next)); } catch { /* ignore */ }
       return next;
     });
-  }, []);
+  }, [agentSupportsWebSearch]);
 
   const toggleIntentRecognition = useCallback(() => {
     setIntentRecognition(prev => {
@@ -1126,6 +1133,7 @@ export function useAgentChat() {
     generationDraft,
     isSyncing,
     webSearchEnabled,
+    agentSupportsWebSearch: agentSupportsWebSearch(),
     intentRecognition,
     sendMessage,
     approveProposal,

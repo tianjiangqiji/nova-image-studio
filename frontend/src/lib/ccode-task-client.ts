@@ -10,7 +10,9 @@ import {
 } from '@/lib/nova-models';
 import {
   normalizeModelBaseUrl,
+  normalizeTextModelBaseUrl,
 } from '@/lib/model-endpoints';
+import type { TextProviderProtocol } from '@/lib/nova-text-protocol';
 
 export interface ImageReference {
   data: string;
@@ -233,7 +235,9 @@ export async function checkModelsAvailability(
 
     return Promise.all(filteredModels.map(async (model) => {
       try {
-        const normalizedBaseUrl = normalizeModelBaseUrl(model.protocol, model.baseUrl);
+        const normalizedBaseUrl = completeImageModels.some(imageModel => imageModel.id === model.id)
+          ? normalizeModelBaseUrl(model.protocol as ProviderProtocol, model.baseUrl)
+          : normalizeTextModelBaseUrl(model.protocol as TextProviderProtocol, model.baseUrl);
         if (!normalizedBaseUrl || !model.apiKey || !model.modelId) {
           return {
             modelId: model.id,
@@ -255,9 +259,17 @@ export async function checkModelsAvailability(
             message: `${response.status}${detail ? ` ${detail.slice(0, 120)}` : ''}`,
           };
         }
-        const data = await response.json().catch(() => ({})) as { data?: Array<{ id?: string; model?: string }> };
-        const exists = Array.isArray(data.data) && data.data.some(
-          (item) => String(item?.id || item?.model || '') === model.modelId,
+        const data = await response.json().catch(() => ({})) as {
+          data?: Array<{ id?: string; model?: string }>;
+          models?: Array<{ name?: string }>;
+        };
+        const exists = (
+          (Array.isArray(data.data) && data.data.some(
+            (item) => String(item?.id || item?.model || '') === model.modelId,
+          ))
+          || (Array.isArray(data.models) && data.models.some(
+            (item) => String(item?.name || '').replace(/^models\//, '') === model.modelId,
+          ))
         );
         return {
           modelId: model.id,
@@ -292,11 +304,11 @@ export function resolveImageTaskProvider(modelId: string): { apiKey: string; bas
   };
 }
 
-export function resolveTextTaskProvider(modelId: string): { apiKey: string; baseUrl: string; protocol: ProviderProtocol } {
+export function resolveTextTaskProvider(modelId: string): { apiKey: string; baseUrl: string; protocol: TextProviderProtocol } {
   const registry = loadRegistry();
   const model = getTextModelById(registry, modelId);
   if (!model) throw new Error(`未找到文本模型配置: ${modelId}`);
-  const normalizedBaseUrl = normalizeModelBaseUrl(model.protocol, model.baseUrl);
+  const normalizedBaseUrl = normalizeTextModelBaseUrl(model.protocol, model.baseUrl);
   return {
     apiKey: model.apiKey,
     baseUrl: normalizedBaseUrl,

@@ -1,14 +1,17 @@
 // 提示词优化流式客户端
-// 复用外部 API /v1/responses 端点（baseUrl 参数指定），根据模式附带不同 system prompt。
-// 图生图/动图模式会将参考图作为 input_image 一并发送（单次请求完成）。
+// 统一通过 /api/nova/proxy/text 按文本协议转发。
 
+import { getConfiguredTextModel } from '@/lib/model-endpoints';
+import {
+  buildSimpleProxyTextRequestBody,
+  handleSimpleTextStreamEvent,
+} from '@/lib/nova-proxy-text';
+import type { TextProviderProtocol } from '@/lib/nova-text-protocol';
 import { readSseStream } from '@/lib/sse-stream-parser';
 
 const OPTIMIZE_MODEL = 'gpt-5.4-mini';
 const OPTIMIZE_TIMEOUT_MS = 30_000;
 const OPTIMIZE_MAX_ATTEMPTS = 2;
-
-// ===== 模式与输入 =====
 
 export type PromptOptimizeMode = 'text-to-image' | 'image-to-image' | 'gif' | 'agent' | 'canvas-prompt-gallery-import' | 'canvas-prompt-gallery-config';
 
@@ -19,10 +22,10 @@ export interface OptimizeImageInput {
 
 export interface StreamPromptOptimizeInput {
   apiKey: string;
+  model?: string;
   mode: PromptOptimizeMode;
   prompt: string;
   images?: OptimizeImageInput[];
-  /** 仅 agent 模式使用的对话上下文参考 */
   context?: string;
 }
 
@@ -37,8 +40,6 @@ export interface StreamPromptOptimizeHandle {
   promise: Promise<void>;
 }
 
-// ===== System Prompts =====
-
 const SYSTEM_PROMPTS: Record<PromptOptimizeMode, string> = {
   'text-to-image': `你是一位专业的 AI 绘图提示词优化专家。
 你的任务是将用户的简短描述优化为高质量的文生图提示词。
@@ -51,7 +52,6 @@ const SYSTEM_PROMPTS: Record<PromptOptimizeMode, string> = {
 - 使用简洁精准的中文描述
 - 不要添加与画面无关的说明文字
 只输出优化后的提示词本身，不要输出任何解释、前缀或额外说明。`,
-
   'image-to-image': `你是一位专业的图生图提示词优化专家。
 你的任务是结合参考图和用户描述，优化为精准的图生图提示词。
 优化规则：
@@ -62,7 +62,6 @@ const SYSTEM_PROMPTS: Record<PromptOptimizeMode, string> = {
 - 使用简洁精准的中文描述
 - 不要添加与画面无关的说明文字
 只输出优化后的提示词本身，不要输出任何解释、前缀或额外说明。`,
-
   gif: `你是一位专业的动图生成提示词优化专家。
 你的任务是结合参考图和用户描述，优化为适合生成 3×4 = 12 帧网格动画的提示词。
 优化规则：
@@ -75,7 +74,6 @@ const SYSTEM_PROMPTS: Record<PromptOptimizeMode, string> = {
 - 使用简洁精准的中文描述
 - 不要添加与画面无关的说明文字
 只输出优化后的提示词本身，不要输出任何解释、前缀或额外说明。`,
-
   agent: `你是一位描述润色助手。
 你的任务是优化用户的自然语言描述，使其更加清晰、准确和详细。
 优化规则：
@@ -87,7 +85,6 @@ const SYSTEM_PROMPTS: Record<PromptOptimizeMode, string> = {
 我们会提供一段对话上下文供你参考（包含最近的聊天记录和图片描述），让你了解用户当前在做什么。
 但上下文仅是参考，不要被其束缚——你的主要任务仍是优化用户输入的那段文本。
 只输出优化后的描述文本，不要输出任何解释、前缀或额外说明。`,
-
   'canvas-prompt-gallery-import': `你是一位无限画布提示词适配专家。
 用户会从提示词广场导入模板提示词，画布会额外提供参考图节点、用户上传的目标角色/OC图节点和生成配置说明。
 你的任务是把提示词广场原文改写为适合该画布流程使用的参考提示词。
@@ -101,7 +98,6 @@ const SYSTEM_PROMPTS: Record<PromptOptimizeMode, string> = {
 - 不要描述图片输入顺序，画布生成配置会负责指定参考图和用户上传图。
 - 使用简洁精准的中文。
 只输出改写后的提示词本身，不要输出解释、前缀、编号或额外说明。`,
-
   'canvas-prompt-gallery-config': `你是一位无限画布配置节点提示词优化专家。
 用户正在把提示词广场模板套用到自己上传的目标角色/OC图上。模板参考图不会提供给你，避免你把模板图内容误解成角色身份；你最多只会收到用户上传的目标角色/OC图。
 你的任务是优化配置节点提示词，让后续生图模型更稳定地参考用户上传图片完成角色替换。
@@ -116,8 +112,6 @@ const SYSTEM_PROMPTS: Record<PromptOptimizeMode, string> = {
 - 使用简洁精准的中文。
 只输出改写后的提示词本身，不要输出解释、前缀、编号或额外说明。`,
 };
-
-// ===== 流式调用 =====
 
 export function streamPromptOptimize(
   input: StreamPromptOptimizeInput,
@@ -166,62 +160,35 @@ async function runWithRetry(
   throw lastError || new Error('优化请求失败');
 }
 
-type OptimizeContentPart =
-  | { type: 'input_text'; text: string }
-  | { type: 'input_image'; image_url: string };
-
-interface SsePayload {
-  type?: string;
-  delta?: string;
-  text?: string;
-  message?: string;
-  response?: { output_text?: string };
-  error?: { message?: string };
-}
-
 async function runAttempt(
   baseUrl: string,
   input: StreamPromptOptimizeInput,
   callbacks: StreamPromptOptimizeCallbacks,
   controller: AbortController,
 ): Promise<void> {
+  const configured = getConfiguredTextModel(input.model || '');
+  const protocol = (configured?.protocol || 'openai-responses') as TextProviderProtocol;
+  const actualModel = configured?.modelId || input.model || OPTIMIZE_MODEL;
+  const actualBaseUrl = configured?.baseUrl || baseUrl;
   const signal = controller.signal;
-  const systemPrompt = SYSTEM_PROMPTS[input.mode];
-  const hasImages = input.images && input.images.length > 0;
 
-  const content: OptimizeContentPart[] = [];
-
-  let userText = `${systemPrompt}\n\n---\n\n`;
-
-  // agent 模式：如有上下文参考，追加在用户输入前
+  let userText = `${SYSTEM_PROMPTS[input.mode]}\n\n---\n\n`;
   if (input.context) {
     userText += `${input.context}\n\n---\n\n`;
   }
-
   userText += `用户输入：\n${input.prompt}`;
-  content.push({ type: 'input_text', text: userText });
 
-  // 图生图/动图模式附带参考图
-  if (hasImages) {
-    for (const img of input.images!) {
-      content.push({
-        type: 'input_image',
-        image_url: img.dataUrl,
-      });
-    }
-  }
+  const parts = [
+    { type: 'text' as const, text: userText },
+    ...((input.images || []).map(image => ({ type: 'image' as const, imageDataUrl: image.dataUrl, mimeType: image.mimeType }))),
+  ];
 
-  const body = {
-    model: OPTIMIZE_MODEL,
-    stream: true,
-    reasoning: { effort: 'low' as const },
-    input: [
-      {
-        role: 'user',
-        content,
-      },
-    ],
-  };
+  const body = buildSimpleProxyTextRequestBody(
+    protocol,
+    actualModel,
+    parts,
+    { stream: true, reasoningEffort: 'low' }
+  );
 
   const timeoutId = window.setTimeout(() => {
     if (!signal.aborted) {
@@ -234,10 +201,10 @@ async function runAttempt(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        protocol: 'openai',
-        baseUrl,
+        protocol,
+        baseUrl: actualBaseUrl,
         apiKey: input.apiKey,
-        model: OPTIMIZE_MODEL,
+        model: actualModel,
         stream: true,
         requestBody: body,
       }),
@@ -267,52 +234,14 @@ async function runAttempt(
         return;
       }
 
-      let payload: SsePayload;
+      let payload: Record<string, unknown>;
       try {
         payload = JSON.parse(event.data);
       } catch {
         return;
       }
 
-      const eventType = payload.type || event.event || '';
-
-      if (eventType === 'response.output_text.delta') {
-        const delta = typeof payload.delta === 'string' ? payload.delta : '';
-        if (delta) {
-          accumulated += delta;
-          callbacks.onDelta(delta);
-        }
-        return;
-      }
-
-      if (eventType === 'response.output_text.done') {
-        if (typeof payload.text === 'string' && payload.text.length > accumulated.length) {
-          const tail = payload.text.slice(accumulated.length);
-          if (tail) {
-            accumulated = payload.text;
-            callbacks.onDelta(tail);
-          }
-        }
-        return;
-      }
-
-      if (eventType === 'response.completed') {
-        const fullText = payload.response?.output_text;
-        if (typeof fullText === 'string' && fullText.length > accumulated.length) {
-          const tail = fullText.slice(accumulated.length);
-          if (tail) {
-            accumulated = fullText;
-            callbacks.onDelta(tail);
-          }
-        }
-        fireDone();
-        return;
-      }
-
-      if (eventType === 'error' || eventType === 'response.error') {
-        const message = payload.error?.message || payload.message || '模型返回错误';
-        throw new Error(message);
-      }
+      accumulated = handleSimpleTextStreamEvent(protocol, payload, event.event || '', accumulated, callbacks.onDelta, fireDone);
     });
 
     fireDone();
@@ -321,13 +250,13 @@ async function runAttempt(
   }
 }
 
-// ===== 工具函数 =====
-
 async function readHttpError(response: Response): Promise<Error> {
   let detail = '';
   try {
     detail = await response.text();
-  } catch { /* ignore */ }
+  } catch {
+    // ignore
+  }
   if (detail) {
     try {
       const parsed = JSON.parse(detail);
@@ -335,7 +264,9 @@ async function readHttpError(response: Response): Promise<Error> {
       if (typeof message === 'string' && message.length > 0) {
         return new Error(`${response.status} ${response.statusText}: ${message}`);
       }
-    } catch { /* not JSON */ }
+    } catch {
+      // not JSON
+    }
   }
   return new Error(`${response.status} ${response.statusText}${detail ? `: ${detail.slice(0, 500)}` : ''}`);
 }

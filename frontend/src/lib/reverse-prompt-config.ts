@@ -4,6 +4,7 @@
 
 import type { TextModelConfig } from '@/lib/nova-models';
 import { getDefaultConfiguredTextModel, getConfiguredTextModel } from '@/lib/model-endpoints';
+import { getTextProviderDescription } from '@/lib/nova-text-protocol';
 
 export type ReversePromptModelId = string;
 
@@ -21,8 +22,8 @@ export function getReversePromptModelOptions(textModels: TextModelConfig[]): Rev
   return textModels.map(m => ({
     value: m.id,
     label: m.name,
-    provider: m.protocol as ReversePromptProvider,
-    description: m.note || (m.protocol === 'google' ? 'Google Gemini 模型' : 'OpenAI 兼容模型'),
+    provider: m.protocol === 'google-gemini' ? 'google' : 'openai',
+    description: m.note || getTextProviderDescription(m.protocol),
   }));
 }
 
@@ -80,8 +81,8 @@ export function getReverseModelOption(modelId: string, textModels?: TextModelCon
     return {
       value: found.id,
       label: found.name,
-      provider: found.protocol as ReversePromptProvider,
-      description: found.note || '',
+      provider: found.protocol === 'google-gemini' ? 'google' : 'openai',
+      description: found.note || getTextProviderDescription(found.protocol),
     };
   }
   return { value: modelId, label: modelId, provider: 'openai', description: '' };
