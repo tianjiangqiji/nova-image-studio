@@ -15,13 +15,14 @@ import {
 import { cn } from '@/lib/utils';
 import {
   MODEL_OPTIONS,
-  MODEL_IMAGE_LIMITS,
   type ModelId,
 } from '@/lib/gemini-config';
 import type { AspectRatio, OutputSize } from '@/lib/job-store';
 import {
+  findReferenceCapableModel,
   getAspectRatioOptions,
   getCustomSizeMaxSide,
+  getModelMaxRefImages,
   getOutputSizeLabel,
   getSizeOptions,
   getSupportsTemperature,
@@ -74,10 +75,10 @@ export function AgentProposalCard({
   onApprove,
   onCancel,
 }: AgentProposalCardProps) {
-  const maxRefs = (MODEL_IMAGE_LIMITS[imageModel]?.max) || 1;
+  const maxRefs = getModelMaxRefImages(imageModel);
   const [prompt, setPrompt] = useState(proposal.prompt);
   const [selectedIds, setSelectedIds] = useState<string[]>(() =>
-    proposal.referencedImageIds.filter(id => images.some(img => img.imgId === id)).slice(0, maxRefs)
+    proposal.referencedImageIds.filter(id => images.some(img => img.imgId === id)).slice(0, Math.max(0, maxRefs))
   );
   const [modelPopoverOpen, setModelPopoverOpen] = useState(false);
   const [sizePopoverOpen, setSizePopoverOpen] = useState(false);
@@ -177,18 +178,10 @@ export function AgentProposalCard({
     background: layout.gptImageBackground,
   };
 
-  const toggleImage = (imgId: string) => {
-    setSelectedIds(prev => {
-      if (prev.includes(imgId)) return prev.filter(id => id !== imgId);
-      if (prev.length >= maxRefs) return prev;
-      return [...prev, imgId];
-    });
-  };
-
   const handleModelChange = (next: ModelId) => {
     onModelChange(next);
     // 重新合法化当前布局：档位 snap、比例 snap、自定义尺寸按支持情况保留/清除
-    setLayout(prev => {
+    setLayout((prev) => {
       const validSizes = getValidOutputSizes(next);
       const nextSize: OutputSize = validSizes.includes(prev.outputSize) ? prev.outputSize : validSizes[0];
       const advanced = getGptImageAdvancedParamsForModel(next, {
@@ -207,7 +200,7 @@ export function AgentProposalCard({
           parallelCount: prev.parallelCount,
         };
       }
-      const validRatios = getAspectRatioOptions(next, nextSize).map(o => o.value);
+      const validRatios = getAspectRatioOptions(next, nextSize).map((o) => o.value);
       const nextRatio: AspectRatio = validRatios.includes(prev.aspectRatio) ? prev.aspectRatio : (validRatios[0] || '1:1');
       const nextCustom = supportsCustomSize(next)
         ? normalizeCustomImageSize(prev.customSize, getCustomSizeMaxSide(next))
@@ -222,6 +215,22 @@ export function AgentProposalCard({
         gptImageBackground: advanced.background,
         parallelCount: prev.parallelCount,
       };
+    });
+  };
+
+  const toggleImage = (imgId: string) => {
+    setSelectedIds((prev) => {
+      if (prev.includes(imgId)) return prev.filter((id) => id !== imgId);
+      if (maxRefs <= 0) {
+        const switched = findReferenceCapableModel(imageModel);
+        if (switched && switched !== imageModel) {
+          handleModelChange(switched);
+          return [imgId];
+        }
+        return prev;
+      }
+      if (prev.length >= maxRefs) return prev;
+      return [...prev, imgId];
     });
   };
 
@@ -268,7 +277,8 @@ export function AgentProposalCard({
 
   const handleApprove = () => {
     if (busy || overLimit) return;
-    onApprove(prompt, selectedIds.slice(0, maxRefs), imageModel, layout);
+    if (maxRefs <= 0 && selectedIds.length > 0) return;
+    onApprove(prompt, selectedIds.slice(0, Math.max(0, maxRefs)), imageModel, layout);
   };
 
   return (
@@ -343,7 +353,12 @@ export function AgentProposalCard({
               );
             })}
           </div>
-          {overLimit && (
+          {maxRefs <= 0 && selectedIds.length > 0 && (
+            <p className="mt-1 text-xs text-destructive">
+              当前模型不支持参考图，请切换到支持编辑的模型或取消选择。
+            </p>
+          )}
+          {overLimit && maxRefs > 0 && (
             <p className="mt-1 text-xs text-destructive">
               当前模型最多 {maxRefs} 张参考图，且没有可自动切换的兼容模型，请取消部分选择。
             </p>

@@ -754,9 +754,10 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       const promptText = configNode.metadata?.composerContent ?? configNode.metadata?.prompt ?? "";
       const genConfig: CanvasGenerationConfig = configNode.metadata?.genConfig ?? defaultConfig;
       const model = normalizeModel(genConfig.model);
-      const max = MODEL_IMAGE_LIMITS[model]?.max || 1;
+      const max = typeof MODEL_IMAGE_LIMITS[model]?.max === "number" ? MODEL_IMAGE_LIMITS[model].max : 1;
       const context = buildNodeGenerationContext(configNode.id, nodes, connections, promptText);
-      return { imageCount: context.imageCount, max, exceeded: context.imageCount > max };
+      const exceeded = max <= 0 ? context.imageCount > 0 : context.imageCount > max;
+      return { imageCount: context.imageCount, max, exceeded };
     },
     [connections, defaultConfig, nodes],
   );
@@ -822,8 +823,12 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       const count = genConfig.count;
       const context = buildNodeGenerationContext(sourceNode.id, nodes, connections, promptText);
       const model = normalizeModel(genConfig.model);
-      const maxReferenceImages = MODEL_IMAGE_LIMITS[model]?.max || 1;
+      const maxReferenceImages = typeof MODEL_IMAGE_LIMITS[model]?.max === "number" ? MODEL_IMAGE_LIMITS[model].max : 1;
 
+      if (maxReferenceImages <= 0 && context.imageCount > 0) {
+        showToast("当前模型不支持参考图", "error");
+        return;
+      }
       if (context.imageCount > maxReferenceImages) {
         showToast("参考图超过模型限制", "error");
         return;

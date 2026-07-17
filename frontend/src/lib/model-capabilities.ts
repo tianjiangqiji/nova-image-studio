@@ -92,6 +92,23 @@ const GPT_IMAGE_ASPECT_RATIOS: { value: AspectRatio; label: string }[] = [
   { value: '21:9', label: '超宽屏' },
 ];
 
+const GROK_IMAGE_ASPECT_RATIOS: { value: AspectRatio; label: string }[] = [
+  { value: '1:1', label: '正方形' },
+  { value: '2:3', label: '竖向' },
+  { value: '3:2', label: '横向' },
+  { value: '3:4', label: '竖向' },
+  { value: '4:3', label: '横向' },
+  { value: '9:16', label: '竖屏' },
+  { value: '16:9', label: '宽屏' },
+  { value: '21:9', label: '超宽屏' },
+];
+
+function isGrokImagePreset(presetId: string): boolean {
+  return presetId === 'grok-imagine-image'
+    || presetId === 'grok-imagine-image-quality'
+    || presetId === 'grok-imagine-image-edit';
+}
+
 export const CUSTOM_IMAGE_SIZE_LIMITS = {
   multiple: 16,
   maxAspectRatio: 3,
@@ -274,6 +291,12 @@ export function getGptImageAdvancedParamsForModel(
 export function getSizeOptions(model: ModelId): { value: OutputSize; label: string }[] {
   const modelConfig = getModelConfig(model);
   if (modelConfig) {
+    if (isGrokImagePreset(modelConfig.builtinPreset)) {
+      const values: OutputSize[] = modelConfig.maxOutputSize === '2K' || modelConfig.maxOutputSize === '4K'
+        ? ['1K', '2K']
+        : ['1K'];
+      return values.map((value) => ({ value, label: value }));
+    }
     const values: OutputSize[] = modelConfig.maxOutputSize === '4K'
       ? (modelConfig.builtinPreset === 'gemini-3.1-flash-image-preview' ? ['512', '1K', '2K', '4K'] : ['1K', '2K', '4K'])
       : modelConfig.maxOutputSize === '2K'
@@ -285,6 +308,15 @@ export function getSizeOptions(model: ModelId): { value: OutputSize; label: stri
   }
 
   const presetId = getBuiltinPresetId(model);
+  if (presetId === 'grok-imagine-image') {
+    return [{ value: '1K', label: '1K' }];
+  }
+  if (presetId === 'grok-imagine-image-quality' || presetId === 'grok-imagine-image-edit') {
+    return [
+      { value: '1K', label: '1K' },
+      { value: '2K', label: '2K' },
+    ];
+  }
   if (presetId === 'gemini-3.1-flash-image-preview') {
     return [
       { value: '512', label: '0.5K' },
@@ -339,6 +371,13 @@ export function getAspectRatioOptions(model: ModelId, outputSize: OutputSize): A
   }
   if (String(presetId).startsWith('gpt-image-2')) {
     return BANANA_ASPECT_RATIOS.map(ar => ({ ...ar, resolution: '' }));
+  }
+  if (isGrokImagePreset(presetId)) {
+    return GROK_IMAGE_ASPECT_RATIOS.map(ar => ({
+      value: ar.value,
+      label: ar.label,
+      resolution: outputSize === '2K' ? '2K' : '1K',
+    }));
   }
   if (presetId === 'gemini-3.1-flash-image-preview' || presetId === 'gemini-3.1-flash-lite-image') {
     return BANANA2_ASPECT_RATIOS.map(ar => ({
@@ -422,15 +461,60 @@ export function isRetryLayoutCompatible(model: ModelId, outputSize: OutputSize, 
     return outputSize === '1K';
   }
 
+  if (presetId === 'grok-imagine-image') {
+    return outputSize === '1K';
+  }
+
+  if (presetId === 'grok-imagine-image-quality' || presetId === 'grok-imagine-image-edit') {
+    return outputSize === '1K' || outputSize === '2K';
+  }
+
   return outputSize === '1K';
+}
+
+export function getModelMaxRefImages(model: ModelId): number {
+  const modelLimits = getModelImageLimits();
+  if (typeof modelLimits[model]?.max === 'number') return Math.max(0, modelLimits[model].max);
+  const configured = getModelConfig(model)?.maxRefImages;
+  if (typeof configured === 'number' && configured >= 0) return configured;
+  return 1;
+}
+
+export function supportsReferenceImages(model: ModelId): boolean {
+  return getModelMaxRefImages(model) > 0;
+}
+
+/** Prefer current model if it accepts refs; otherwise default i2i model or first capable model. */
+export function findReferenceCapableModel(preferredId?: string): ModelId | null {
+  const registry = loadRegistry();
+  const complete = registry.imageModels.filter((model) =>
+    Boolean(model.name.trim() && model.modelId.trim() && model.apiKey.trim() && model.baseUrl.trim()),
+  );
+  const capable = complete.filter((model) => model.maxRefImages > 0);
+  if (capable.length === 0) return null;
+
+  if (preferredId) {
+    const preferred = capable.find((model) => model.id === preferredId);
+    if (preferred) return preferred.id;
+  }
+
+  const defaultI2i = registry.defaults.imageToImage;
+  if (defaultI2i) {
+    const fromDefault = capable.find((model) => model.id === defaultI2i);
+    if (fromDefault) return fromDefault.id;
+  }
+
+  const grokEdit = capable.find((model) => model.builtinPreset === 'grok-imagine-image-edit');
+  if (grokEdit) return grokEdit.id;
+
+  return capable[0].id;
 }
 
 export function getCompatibleRetryData(job: StoredJob): RetryData {
   const model = normalizeModel(job.model);
   const modelCompatible = model === job.model;
-  const supportsTemperature = !isGptImageModel(model);
-  const modelLimits = getModelImageLimits();
-  const maxRefs = modelLimits[model]?.max || getModelConfig(model)?.maxRefImages || 1;
+  const supportsTemperature = getSupportsTemperature(model);
+  const maxRefs = getModelMaxRefImages(model);
   const defaultLayout = getDefaultRetryLayout(model);
   const shouldKeepLayout = modelCompatible && isRetryLayoutCompatible(model, job.output_size, job.aspect_ratio);
   const outputSize: OutputSize = shouldKeepLayout ? job.output_size : defaultLayout.outputSize;
@@ -465,7 +549,12 @@ export function getCompatibleRetryData(job: StoredJob): RetryData {
 }
 
 export function getSupportsTemperature(model: ModelId): boolean {
-  return !isGptImageModel(model);
+  if (isGptImageModel(model)) return false;
+  const presetId = getBuiltinPresetId(model);
+  if (isGrokImagePreset(presetId)) return false;
+  const modelConfig = getModelConfig(model);
+  if (modelConfig?.protocol === 'grok') return false;
+  return true;
 }
 
 // ===== Agent 提案参数合法化 =====

@@ -6,14 +6,17 @@ import {
   type TextProviderProtocol,
 } from '@/lib/nova-text-protocol';
 
-export type ProviderProtocol = 'google' | 'openai';
+export type ProviderProtocol = 'google' | 'openai' | 'grok';
 export type ImageOutputSize = '512' | '1K' | '2K' | '4K';
 export type BuiltinImagePresetId =
   | 'gemini-2.5-flash-image'
   | 'gemini-3-pro-image-preview'
   | 'gemini-3.1-flash-image-preview'
   | 'gemini-3.1-flash-lite-image'
-  | 'gpt-image-2';
+  | 'gpt-image-2'
+  | 'grok-imagine-image'
+  | 'grok-imagine-image-quality'
+  | 'grok-imagine-image-edit';
 
 export interface ImageModelConfig {
   id: string;
@@ -117,6 +120,36 @@ export const BUILTIN_IMAGE_PRESETS: Record<BuiltinImagePresetId, BuiltinImagePre
     maxOutputSize: '4K',
     supportsAdvancedParams: true,
   },
+  'grok-imagine-image': {
+    id: 'grok-imagine-image',
+    protocol: 'grok',
+    name: 'Grok Imagine',
+    modelId: 'grok-imagine-image',
+    baseUrl: 'https://api.x.ai',
+    maxRefImages: 0,
+    maxOutputSize: '1K',
+    supportsAdvancedParams: false,
+  },
+  'grok-imagine-image-quality': {
+    id: 'grok-imagine-image-quality',
+    protocol: 'grok',
+    name: 'Grok Imagine Quality',
+    modelId: 'grok-imagine-image-quality',
+    baseUrl: 'https://api.x.ai',
+    maxRefImages: 0,
+    maxOutputSize: '2K',
+    supportsAdvancedParams: false,
+  },
+  'grok-imagine-image-edit': {
+    id: 'grok-imagine-image-edit',
+    protocol: 'grok',
+    name: 'Grok Imagine Edit',
+    modelId: 'grok-imagine-image-edit',
+    baseUrl: 'https://api.x.ai',
+    maxRefImages: 4,
+    maxOutputSize: '2K',
+    supportsAdvancedParams: false,
+  },
 };
 
 export const BUILTIN_IMAGE_PRESET_OPTIONS = Object.values(BUILTIN_IMAGE_PRESETS).map((preset) => ({
@@ -169,7 +202,7 @@ export const DEFAULT_DEFAULTS: DefaultModels = {
 };
 
 function isProviderProtocol(value: unknown): value is ProviderProtocol {
-  return value === 'google' || value === 'openai';
+  return value === 'google' || value === 'openai' || value === 'grok';
 }
 
 function isBuiltinImagePresetId(value: unknown): value is BuiltinImagePresetId {
@@ -185,7 +218,9 @@ function normalizeImageOutputSize(value: unknown, fallback: ImageOutputSize): Im
 function inferBuiltinPresetId(raw: Partial<ImageModelConfig>): BuiltinImagePresetId {
   const candidate = raw.builtinPreset || raw.id || raw.modelId;
   if (isBuiltinImagePresetId(candidate)) return candidate;
-  if (String(raw.protocol || '').trim() === 'google') return 'gemini-3-pro-image-preview';
+  const protocol = String(raw.protocol || '').trim();
+  if (protocol === 'google') return 'gemini-3-pro-image-preview';
+  if (protocol === 'grok') return 'grok-imagine-image';
   return 'gpt-image-2';
 }
 
@@ -204,8 +239,8 @@ function normalizeImageModelConfig(raw: Partial<ImageModelConfig>): ImageModelCo
     apiKey: String(raw.apiKey || '').trim(),
     baseUrl: String(raw.baseUrl || preset.baseUrl).trim(),
     builtinPreset: presetId,
-    maxRefImages: Number.isFinite(raw.maxRefImages) && Number(raw.maxRefImages) > 0
-      ? Math.max(1, Math.floor(Number(raw.maxRefImages)))
+    maxRefImages: Number.isFinite(raw.maxRefImages) && Number(raw.maxRefImages) >= 0
+      ? Math.max(0, Math.floor(Number(raw.maxRefImages)))
       : preset.maxRefImages,
     maxOutputSize: normalizeImageOutputSize(raw.maxOutputSize, preset.maxOutputSize),
     supportsAdvancedParams: protocol === 'openai'

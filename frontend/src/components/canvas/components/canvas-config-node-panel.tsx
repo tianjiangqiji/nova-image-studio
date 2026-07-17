@@ -107,10 +107,14 @@ export function CanvasConfigNodePanel({
         </div>
         <div className="flex items-center justify-between gap-2 text-[11px] leading-tight">
           <span className={cn("min-w-0 truncate", referenceLimit.exceeded ? "text-destructive" : "text-muted-foreground")}>
-            当前模型允许参考图数量：{referenceLimit.max}
+            {referenceLimit.max <= 0
+              ? "当前模型不支持参考图"
+              : `当前模型允许参考图数量：${referenceLimit.max}`}
           </span>
           <span className={cn("shrink-0", referenceLimit.exceeded ? "text-destructive" : "text-muted-foreground")}>
-            {referenceLimit.exceeded ? "参考图超过模型限制" : `已连接 ${referenceLimit.imageCount} 张`}
+            {referenceLimit.exceeded
+              ? (referenceLimit.max <= 0 ? "请移除 @ 图片引用" : "参考图超过模型限制")
+              : `已连接 ${referenceLimit.imageCount} 张`}
           </span>
         </div>
       </div>

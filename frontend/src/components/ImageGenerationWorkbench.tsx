@@ -20,13 +20,16 @@ import { MODEL_IMAGE_LIMITS, MODEL_OPTIONS, type ModelId } from '@/lib/gemini-co
 import {
   DEFAULT_GPT_IMAGE_ADVANCED_PARAMS,
   detectClosestAspectRatio,
+  findReferenceCapableModel,
   getAspectRatioOptions,
   getCustomSizeMaxSide,
   getGptImageAdvancedParamsForModel,
+  getModelMaxRefImages,
   getValidOutputSizes,
   normalizeCustomImageSize,
   normalizeModel,
   supportsCustomSize,
+  supportsReferenceImages,
   type GptImageAdvancedParams,
   type GptImageBackground,
   type GptImageQuality,
@@ -137,15 +140,27 @@ export function ImageGenerationWorkbench({
   const [optimizeError, setOptimizeError] = useState<string | null>(null);
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
 
-  const modelLimit = MODEL_IMAGE_LIMITS[model] || { max: 1, description: '最多 1 张参考图片' };
+  const modelLimit = MODEL_IMAGE_LIMITS[model] || { max: getModelMaxRefImages(model), description: '最多 1 张参考图片' };
   const maxImages = modelLimit.max;
+  const refsSupported = maxImages > 0;
   const aspectRatioOptions = useMemo(() => getAspectRatioOptions(model, outputSize), [model, outputSize]);
   const currentMode: WorkbenchMode = pendingFiles.length > 0 ? 'image-to-image' : 'text-to-image';
   const autoLayoutLocked = outputSize === 'auto';
   const disabledMessage = '请先在设置中配置 Nova API 密钥，配置完成后即可开始生成图片。';
 
   const handleParamsChange = useCallback((patch: Partial<GenerationParamsValue>) => {
-    if (patch.model !== undefined) setModel(patch.model);
+    if (patch.model !== undefined) {
+      setModel(patch.model);
+      if (!supportsReferenceImages(patch.model)) {
+        setPendingFiles((prev) => {
+          if (prev.length > 0) {
+            setUploadError('当前模型不支持参考图，已清除参考图');
+            return [];
+          }
+          return prev;
+        });
+      }
+    }
     if (patch.outputSize !== undefined) setOutputSize(patch.outputSize);
     if ('customSize' in patch) setCustomSize(patch.customSize);
     if (patch.aspectRatio !== undefined) setAspectRatio(patch.aspectRatio);
@@ -280,17 +295,46 @@ export function ImageGenerationWorkbench({
     if (referenceDraft.prompt) {
       setPrompt(referenceDraft.prompt);
     }
-    setPendingFiles(prev => {
-      const existingIds = new Set(prev.map(file => file.id));
-      const remainingSlots = Math.max(0, maxImages - prev.length);
+
+    let activeModel = model;
+    let activeMax = maxImages;
+    if (!supportsReferenceImages(activeModel) || activeMax <= 0) {
+      const switched = findReferenceCapableModel(activeModel);
+      if (!switched) {
+        setUploadError('当前没有支持参考图的模型，请先在设置中配置可编辑模型');
+        onDraftConsumed?.();
+        return;
+      }
+      activeModel = switched;
+      activeMax = getModelMaxRefImages(switched);
+      setModel(switched);
+      const nextSizes = getValidOutputSizes(switched);
+      const nextSize = nextSizes.includes(outputSize) ? outputSize : nextSizes[0];
+      setOutputSize(nextSize);
+      if (nextSize === 'auto') {
+        setAspectRatio('auto');
+        setCustomSize(undefined);
+      } else {
+        const ratios = getAspectRatioOptions(switched, nextSize).map((item) => item.value);
+        if (!ratios.includes(aspectRatio)) setAspectRatio(ratios[0] || '1:1');
+        if (!supportsCustomSize(switched)) setCustomSize(undefined);
+      }
+      setGptImageAdvancedParams(getGptImageAdvancedParamsForModel(switched, gptImageAdvancedParams));
+      const label = MODEL_OPTIONS.find((o) => o.value === switched)?.label || switched;
+      dispatchImageActionToast(`已切换到支持参考图的模型：${label}`, 'info');
+    }
+
+    setPendingFiles((prev) => {
+      const existingIds = new Set(prev.map((file) => file.id));
+      const remainingSlots = Math.max(0, activeMax - prev.length);
       if (remainingSlots <= 0) {
-        setUploadError(`${MODEL_OPTIONS.find(o => o.value === model)?.label} 最多支持 ${maxImages} 张参考图`);
+        setUploadError(`${MODEL_OPTIONS.find((o) => o.value === activeModel)?.label} 最多支持 ${activeMax} 张参考图`);
         return prev;
       }
       const incoming: UploadedFile[] = referenceDraft.refImages
-        .filter(img => !existingIds.has(img.id))
+        .filter((img) => !existingIds.has(img.id))
         .slice(0, remainingSlots)
-        .map(img => ({
+        .map((img) => ({
           id: img.id,
           name: img.name,
           preview: img.dataUrl,
@@ -299,7 +343,7 @@ export function ImageGenerationWorkbench({
           badge: img.badge || '参考',
         }));
       if (incoming.length < referenceDraft.refImages.length) {
-        setUploadError(`${MODEL_OPTIONS.find(o => o.value === model)?.label} 最多支持 ${maxImages} 张参考图，已添加可容纳的图片`);
+        setUploadError(`${MODEL_OPTIONS.find((o) => o.value === activeModel)?.label} 最多支持 ${activeMax} 张参考图，已添加可容纳的图片`);
       } else {
         setUploadError(null);
       }
@@ -319,6 +363,10 @@ export function ImageGenerationWorkbench({
   }, [aspectRatioOptions]);
 
   const processFiles = useCallback(async (fileList: FileList | File[]) => {
+    if (maxImages <= 0) {
+      setUploadError('当前模型不支持参考图，请切换到支持编辑的模型');
+      return;
+    }
     const filesToProcess = Array.from(fileList).filter(f => f.type.startsWith('image/'));
     if (filesToProcess.length === 0) {
       setUploadError('请选择图像文件');
@@ -375,6 +423,10 @@ export function ImageGenerationWorkbench({
 
   const handleImportAssets = useCallback(async (selectedAssets: ImageAsset[]) => {
     if (selectedAssets.length === 0) return;
+    if (maxImages <= 0) {
+      setUploadError('当前模型不支持参考图，请切换到支持编辑的模型');
+      return;
+    }
 
     const remainingSlots = Math.max(0, maxImages - pendingFiles.length);
     if (remainingSlots <= 0) {
@@ -457,7 +509,7 @@ export function ImageGenerationWorkbench({
 
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
-      if (disabled || loading) return;
+      if (disabled || loading || maxImages <= 0) return;
       const target = e.target as HTMLElement;
       if (!formRef.current?.contains(target)) return;
       const items = e.clipboardData?.items;
@@ -476,7 +528,7 @@ export function ImageGenerationWorkbench({
     };
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
-  }, [disabled, loading, processFiles]);
+  }, [disabled, loading, maxImages, processFiles]);
 
   const handleRemovePending = useCallback((id: string) => {
     setPendingFiles(prev => prev.filter(f => f.id !== id));
@@ -584,14 +636,16 @@ export function ImageGenerationWorkbench({
             <div className="p-4 pb-2">
               <div className="flex gap-3">
                 <div
-                  onDrop={handleDrop}
-                  onDragOver={handleDragOver}
+                  onDrop={refsSupported ? handleDrop : undefined}
+                  onDragOver={refsSupported ? handleDragOver : (e) => e.preventDefault()}
                   onDragLeave={() => setIsDragOver(false)}
                   className={cn(
                     'relative flex-[3] overflow-hidden rounded-xl border-2 border-dashed px-6 py-8 text-center transition-all',
-                    isDragOver
-                      ? 'border-primary bg-primary/20'
-                      : 'cursor-pointer border-primary/30 bg-primary/5 hover:border-primary/50 hover:bg-primary/10',
+                    !refsSupported
+                      ? 'cursor-not-allowed border-border/60 bg-muted/30 opacity-60'
+                      : isDragOver
+                        ? 'border-primary bg-primary/20'
+                        : 'cursor-pointer border-primary/30 bg-primary/5 hover:border-primary/50 hover:bg-primary/10',
                   )}
                 >
                   <input
@@ -599,15 +653,23 @@ export function ImageGenerationWorkbench({
                     accept="image/*"
                     multiple
                     onChange={handleFileSelect}
-                    disabled={loading}
+                    disabled={loading || !refsSupported}
                     className="absolute inset-0 h-full w-full cursor-pointer overflow-hidden opacity-0 disabled:cursor-not-allowed"
                     style={{ fontSize: 0 }}
                   />
-                  <CloudUpload className={cn('mx-auto mb-1 h-6 w-6', isDragOver ? 'text-primary' : 'text-muted-foreground')} />
+                  <CloudUpload className={cn('mx-auto mb-1 h-6 w-6', isDragOver && refsSupported ? 'text-primary' : 'text-muted-foreground')} />
                   <p className="text-sm font-medium">
-                    {loading ? '读取中...' : isDragOver ? '将图像拖放到这里' : '参考图（可选）'}
+                    {!refsSupported
+                      ? '当前模型不支持参考图'
+                      : loading
+                        ? '读取中...'
+                        : isDragOver
+                          ? '将图像拖放到这里'
+                          : '参考图（可选）'}
                   </p>
-                  <p className="text-xs text-muted-foreground">点击选择 · 拖放 · Ctrl+V 粘贴</p>
+                  <p className="text-xs text-muted-foreground">
+                    {refsSupported ? '点击选择 · 拖放 · Ctrl+V 粘贴' : '请切换到支持编辑的模型'}
+                  </p>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {pendingFiles.length} / {maxImages} 张
                   </p>
@@ -615,13 +677,13 @@ export function ImageGenerationWorkbench({
                 <button
                   type="button"
                   onClick={() => setAssetPickerOpen(true)}
-                  disabled={loading || pendingFiles.length >= maxImages}
-                  title="从素材库导入参考图"
+                  disabled={loading || !refsSupported || pendingFiles.length >= maxImages}
+                  title={refsSupported ? '从素材库导入参考图' : '当前模型不支持参考图'}
                   className="flex flex-1 cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-primary/30 bg-primary/5 px-3 py-4 text-center transition-all hover:border-primary/50 hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <ImagePlus className="h-6 w-6 text-muted-foreground" />
                   <span className="text-sm font-medium">素材库</span>
-                  <span className="text-xs text-muted-foreground">导入参考图</span>
+                  <span className="text-xs text-muted-foreground">{refsSupported ? '导入参考图' : '不支持参考图'}</span>
                 </button>
               </div>
             </div>

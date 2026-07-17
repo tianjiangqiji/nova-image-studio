@@ -8,13 +8,14 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { CustomSizeDialog } from '@/components/CustomSizeDialog';
 import { GptImageAdvancedParamsControl } from '@/components/GptImageAdvancedParamsControl';
 import { cn } from '@/lib/utils';
-import { MODEL_OPTIONS, isGptImageModel, type ModelId } from '@/lib/gemini-config';
+import { MODEL_OPTIONS, type ModelId } from '@/lib/gemini-config';
 import {
   getAspectRatioOptions,
   getCustomSizeMaxSide,
   getGptImageAdvancedParamsForModel,
   getOutputSizeLabel,
   getSizeOptions,
+  getSupportsTemperature,
   normalizeCustomImageSize,
   supportsAutoLayout,
   supportsCustomSize,
@@ -58,7 +59,7 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
   const model = value.model;
   const sizeOptions = getSizeOptions(model);
   const aspectRatioOptions = getAspectRatioOptions(model, value.outputSize);
-  const supportsTemperature = !isGptImageModel(model);
+  const supportsTemperature = getSupportsTemperature(model);
   const supportsAdvancedParams = supportsGptImageAdvancedParams(model);
   const autoLayoutAvailable = supportsAutoLayout(model);
   const autoLayoutLocked = autoLayoutAvailable && value.outputSize === 'auto';

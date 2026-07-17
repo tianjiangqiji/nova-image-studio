@@ -60,7 +60,9 @@ export function getModelImageLimits(): Record<string, ModelImageLimit> {
     model.id,
     {
       max: model.maxRefImages,
-      description: `最多 ${model.maxRefImages} 张参考图片`,
+      description: model.maxRefImages <= 0
+        ? '当前模型不支持参考图'
+        : `最多 ${model.maxRefImages} 张参考图片`,
     },
   ] as const));
   return Object.fromEntries(entries);
