@@ -172,22 +172,19 @@ nova-image-studio/
 git clone https://github.com/tianjiangqiji/nova-image-studio.git
 cd nova-image-studio
 
-# 1. 复制环境变量到项目根目录（Docker 挂载为 /app/.env）
-cp backend/.env.example .env
+# 1. 复制 Docker 专用环境变量到项目根目录（挂载为 /app/.env）
+cp backend/.env.docker.example .env
+# 按需编辑 .env（限流、广场密码等）
 
-# 2. 编辑 .env：Docker 场景必须把数据路径改成 backend/data/...
-#    NOVA_TASK_DB=backend/data/nova-tasks.sqlite
-#    NOVA_IMAGE_DIR=backend/data/nova-images
-
-# 3. 复制配置文件到根目录（compose 会挂到容器内）
+# 2. 复制配置文件到根目录（compose 会挂到容器内）
 cp backend/blacklist.json blacklist.json
 cp backend/prompts.json prompts.json
 # 若仓库里没有这两份文件：touch blacklist.json prompts.json 后自行填写
 
-# 4. 创建数据目录
+# 3. 创建数据目录
 mkdir -p data
 
-# 5. 启动服务
+# 4. 启动服务
 docker compose up -d
 
 # 运行期最少需要：
@@ -380,10 +377,10 @@ docker push tianjiangqiji/nova-image-studio:latest
 
 ## ⚙️ 环境变量
 
-| 场景 | `.env` 位置 | 读取路径 | 推荐数据路径 |
+| 场景 | 模板 | 复制到 | 数据路径（模板已写好） |
 | --- | --- | --- | --- |
-| 本地开发 / 本地生产（`npm run dev` / `npm start`） | `backend/.env` | `backend/.env`（cwd=`backend/`） | `./data/nova-tasks.sqlite`、`./data/nova-images` |
-| Docker Compose | 项目根 `.env` | `/app/.env`（cwd=`/app`） | `backend/data/nova-tasks.sqlite`、`backend/data/nova-images` |
+| 本地开发 / 本地生产 | `backend/.env.example` | `backend/.env` | `./data/nova-tasks.sqlite`、`./data/nova-images` |
+| Docker Compose | `backend/.env.docker.example` | 项目根 `.env` | `backend/data/nova-tasks.sqlite`、`backend/data/nova-images` |
 
 | 变量 | 必填 | 默认 | 说明 |
 | --- | --- | --- | --- |
