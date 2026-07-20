@@ -168,19 +168,26 @@ nova-image-studio/
 ### 快速启动
 
 ```bash
+# 0. clone下来
+git clone https://github.com/tianjiangqiji/nova-image-studio.git
+cd nova-image-studio
 # 1. 复制环境变量文件（如果不是从clone下来的，则自己新建并复制过来即可）
 cp backend/.env.example .env
 
 # 2. 编辑 .env 按需调整配置
 
-# 3. 创建必要的配置文件（如果不存在）
-touch blacklist.json prompts.json
+# 3. 复制必要的配置文件（如果不存在则自行新建:touch blacklist.json prompts.json）
+cp backend/blacklist.json blacklist.json
+cp backend/prompts.json prompts.json
 
 # 4. 创建数据目录
-mkdir -p data/images
+mkdir -p data
 
 # 5. 启动服务
 docker compose up -d
+
+# 最终只需要.env、blacklist.json、prompts.json、data/images、docker-compose.yml。其他源码文件可不保留
+
 ```
 
 访问 <http://localhost:3000>。
