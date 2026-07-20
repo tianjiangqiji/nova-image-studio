@@ -25,6 +25,7 @@ out.zip
 # database & images (backend)
 backend/nova-tasks.sqlite*
 backend/nova-images/
+backend/data/
 backend/ccode-tasks.sqlite*
 backend/ccode-images/
 # IDE/Editor configs
@@ -38,6 +39,9 @@ backend/ccode-images/
 .agents/
 
 data/
+# Docker Compose 运行时在根目录复制的配置（勿提交）
+/blacklist.json
+/prompts.json
 # debug
 npm-debug.log*
 yarn-debug.log*

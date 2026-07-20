@@ -4,9 +4,13 @@ services:
     container_name: nova-image-studio
     ports:
       - "3000:3000"
+    # 覆盖数据路径，确保落在挂载的 ./data（cwd=/app）
+    environment:
+      NOVA_TASK_DB: backend/data/nova-tasks.sqlite
+      NOVA_IMAGE_DIR: backend/data/nova-images
     volumes:
       - ./data:/app/backend/data
       - ./blacklist.json:/app/backend/blacklist.json
       - ./prompts.json:/app/backend/prompts.json
-      - ./.env:/app/backend/.env
+      - ./.env:/app/.env
     restart: unless-stopped
