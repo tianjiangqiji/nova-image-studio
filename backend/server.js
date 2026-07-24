@@ -141,6 +141,11 @@ const pendingCountByIp = new Map(); // ip -> count
 const pendingCountByApiKeyHash = new Map(); // apiKeyHash -> count
 const queue = [];
 let activeCount = 0;
+const runningTaskPromises = new Set();
+let isShuttingDown = false;
+let shutdownPromise = null;
+let httpServerRef = null;
+let wsServerRef = null;
 
 // ===== WebSocket subscription state =====
 const taskSubscriptions = new Map(); // WebSocket -> Set<taskId>
@@ -318,7 +323,7 @@ function getQueueStats() {
   const processingCount = counts[TASK_STATUS.PROCESSING] || 0;
   const queuedCount = (counts[TASK_STATUS.QUEUED] || 0) + (counts[TASK_STATUS.LEGACY_QUEUED] || 0);
   const totalActiveTasks = processingCount + queuedCount;
-  const acceptingNewTasks = !isRejectNewTasksEnabled();
+  const acceptingNewTasks = !isShuttingDown && !isRejectNewTasksEnabled();
 
   return {
     concurrencyLimit: GLOBAL_TASK_CONCURRENCY,
@@ -646,7 +651,7 @@ function validateCreatePayload(body) {
 function createTask(body, req) {
   validateCreatePayload(body);
   const limitConfig = getLimitConfig();
-  if (isRejectNewTasksEnabled()) {
+  if (isShuttingDown || isRejectNewTasksEnabled()) {
     throw createHttpError(503, 'SERVER_NOT_ACCEPTING_TASKS', LIMIT_ERROR_MESSAGES.notAcceptingTasks, limitConfig.retryAfterSeconds);
   }
   const source = enforceRateLimit(req, body, limitConfig);
@@ -1238,10 +1243,12 @@ function drainQueue() {
 
     queue.shift();
     activeCount += imageSlots;
-    runTask(taskId).finally(() => {
+    const runPromise = runTask(taskId).finally(() => {
       activeCount -= imageSlots;
+      runningTaskPromises.delete(runPromise);
       drainQueue();
     });
+    runningTaskPromises.add(runPromise);
   }
 }
 
@@ -1551,6 +1558,93 @@ function setupWebSocketServer() {
   }, WS_HEARTBEAT_INTERVAL_MS).unref();
 
   return wss;
+}
+
+function closeHttpServer(server) {
+  if (!server || typeof server.close !== 'function') return Promise.resolve();
+  return new Promise(resolve => {
+    try {
+      server.close(() => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
+function closeWebSocketServer(wss) {
+  if (!wss || typeof wss.close !== 'function') return Promise.resolve();
+  for (const ws of wss.clients) {
+    try {
+      ws.close(1001, 'Server shutting down');
+    } catch {
+      // ignore
+    }
+  }
+  return new Promise(resolve => {
+    try {
+      wss.close(() => resolve());
+    } catch {
+      resolve();
+    }
+  });
+}
+
+async function waitForRunningTasks() {
+  const running = Array.from(runningTaskPromises);
+  if (running.length === 0) return;
+  await Promise.allSettled(running);
+}
+
+function checkpointTaskDatabase() {
+  try {
+    const result = db.pragma('wal_checkpoint(TRUNCATE)');
+    console.log('[shutdown] SQLite WAL checkpoint 完成', result);
+  } catch (error) {
+    console.warn('[shutdown] SQLite WAL checkpoint 失败', error?.message || error);
+  }
+}
+
+function closeTaskDatabase() {
+  try {
+    db.close();
+  } catch (error) {
+    console.warn('[shutdown] SQLite 关闭失败', error?.message || error);
+  }
+}
+
+function registerShutdownHandlers() {
+  const handleShutdownSignal = signal => {
+    if (shutdownPromise) return shutdownPromise;
+
+    shutdownPromise = (async () => {
+      isShuttingDown = true;
+      console.log(`[shutdown] 收到 ${signal}，开始优雅退出`);
+
+      await Promise.allSettled([
+        closeHttpServer(httpServerRef),
+        closeWebSocketServer(wsServerRef),
+      ]);
+
+      await waitForRunningTasks();
+      checkpointTaskDatabase();
+      closeTaskDatabase();
+      process.exit(0);
+    })().catch(error => {
+      console.error('[shutdown] 优雅退出失败', error);
+      closeTaskDatabase();
+      process.exit(1);
+    });
+
+    return shutdownPromise;
+  };
+
+  process.on('SIGTERM', () => {
+    void handleShutdownSignal('SIGTERM');
+  });
+
+  process.on('SIGINT', () => {
+    void handleShutdownSignal('SIGINT');
+  });
 }
 
 async function handleApi(req, res, pathname) {
@@ -1897,7 +1991,12 @@ const startServer = () => {
       console.log(`Listening on ${listenUrl}`);
     }
   });
+
+  wsServerRef = wss;
+  httpServerRef = httpServer;
 };
+
+registerShutdownHandlers();
 
 if (IS_DEV) {
   app.prepare().then(startServer);
