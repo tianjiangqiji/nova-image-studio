@@ -1,25 +1,19 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { AlertCircle, Clock, FileText, Hash, Images, RefreshCw, Save, Sparkles, Upload } from "lucide-react";
+import { AlertCircle, Download, FileText, Film, Images, RefreshCw, Save, Sparkles, Upload } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { canvasTheme } from "../lib/canvas-theme";
 import { formatBytes } from "../lib/image-utils";
 import { CanvasNodeType, type CanvasNodeData } from "../types";
+import { NodeProgressOverlay } from "./canvas-node-progress-overlay";
 import { Spinner } from "./canvas-ui";
 import { TextAnnotationNodeBody } from "./canvas-node-text-annotation";
 
 export type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 
 const RETRY_COOLDOWN_MS = 3000;
-
-const STATUS_LABELS: Record<string, string> = {
-  submitting: "提交中…",
-  queued: "排队中",
-  processing: "生成中",
-  loading: "加载中",
-};
 
 type CanvasNodeProps = {
   data: CanvasNodeData;
@@ -152,6 +146,8 @@ export const CanvasNode = React.memo(function CanvasNode({
         <div className="relative min-h-0 flex-1">
           {data.type === CanvasNodeType.Image ? (
             <ImageNodeBody data={data} imageUrl={imageUrl} status={status} showImageInfo={showImageInfo} onUploadToNode={onUploadToNode} onImportToNode={onImportToNode} onSaveToAssets={onSaveToAssets} onRetry={onRetry} onRefreshProgress={onRefreshProgress} onOpenImage={onOpenImage} />
+          ) : data.type === CanvasNodeType.Video ? (
+            <VideoNodeBody data={data} status={status} onRetry={onRetry} onRefreshProgress={onRefreshProgress} />
           ) : data.type === CanvasNodeType.Text ? (
             <TextNodeBody data={data} onContentChange={onContentChange} onSelectNode={onSelectNode} onImportTextToNode={onImportTextToNode} onSaveTextToAssets={onSaveTextToAssets} onAiGenerate={onAiGenerate} onToggleRenderMode={onToggleRenderMode} />
           ) : data.type === CanvasNodeType.TextAnnotation ? (
@@ -291,7 +287,7 @@ function ImageNodeBody({
       )}
 
       {/* 生成中 overlay（覆盖在图片上方，图片可能已有一部分） */}
-      {isGenerating && <GenerationStatusOverlay data={data} status={status} onRefreshProgress={onRefreshProgress} />}
+      {isGenerating && <NodeProgressOverlay data={data} status={status} onRefreshProgress={onRefreshProgress} />}
 
       {/* 存素材按钮（仅在有图片且非生成中时显示） */}
       {url && !isGenerating && onSaveToAssets && (
@@ -336,53 +332,101 @@ function ImageNodeBody({
   );
 }
 
-/** 生成状态 overlay：显示状态、用时、任务 ID。 */
-function GenerationStatusOverlay({ data, status, onRefreshProgress }: { data: CanvasNodeData; status: string; onRefreshProgress?: (node: CanvasNodeData) => void | Promise<void> }) {
-  const startedAt = data.metadata?.generationStartedAt;
-  const taskId = data.metadata?.generationTaskId;
-  const [elapsed, setElapsed] = useState(() => (startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0));
-  const [refreshing, setRefreshing] = useState(false);
+/** Video 结果节点体：成功内联播放 / 链接过期兜底 / 错误 / 空态 / 生成中进度遮罩。 */
+function VideoNodeBody({
+  data,
+  status,
+  onRetry,
+  onRefreshProgress,
+}: {
+  data: CanvasNodeData;
+  status: string;
+  onRetry?: (node: CanvasNodeData) => void;
+  onRefreshProgress?: (node: CanvasNodeData) => void | Promise<void>;
+}) {
+  const videoUrl = data.metadata?.videoUrl;
+  const posterUrl = data.metadata?.videoPosterUrl;
+  const isGenerating = ["uploading", "submitting", "queued", "processing"].includes(status);
+  const isError = status === "error";
+  // 上游直链数小时后过期：<video> 加载失败时切入过期态；新任务成功写入新 videoUrl 后复位。
+  // 复位用渲染期「prop 变化调整 state」写法（React 官方推荐），而不是 effect 里 setState
+  const [expired, setExpired] = useState(false);
+  const [prevUrl, setPrevUrl] = useState(videoUrl);
+  if (prevUrl !== videoUrl) {
+    setPrevUrl(videoUrl);
+    setExpired(false);
+  }
 
-  useEffect(() => {
-    if (!startedAt) return;
-    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
-    return () => clearInterval(timer);
-  }, [startedAt]);
-
-  const formatElapsed = (s: number) => {
-    if (s < 60) return `${s}s`;
-    return `${Math.floor(s / 60)}m${s % 60}s`;
-  };
+  const durationText = typeof data.metadata?.videoDurationSec === "number" ? `${Math.round(data.metadata.videoDurationSec)}s` : "";
+  const badgeText = durationText;
 
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/70 p-3 backdrop-blur-sm" data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
-      <Spinner className="size-5 text-primary" />
-      <span className="text-xs font-medium text-foreground">{STATUS_LABELS[status] || "生成中"}</span>
-      {startedAt && (
-        <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
-          <Clock className="size-3" />
-          {formatElapsed(elapsed)}
-        </span>
+    <div className="relative h-full w-full">
+      {/* 成功态：内联播放器。controls 区域要能交互，故阻止 pointer 冒泡（不触发节点拖拽/框选） */}
+      {videoUrl && !expired && (
+        <div className="h-full w-full" data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
+          <video
+            src={videoUrl}
+            poster={posterUrl}
+            controls
+            preload="metadata"
+            className="h-full w-full object-contain"
+            draggable={false}
+            onError={() => setExpired(true)}
+          />
+        </div>
       )}
-      {taskId && (
-        <span className="max-w-[10rem] truncate text-[10px] text-muted-foreground" title={taskId}>
-          <Hash className="mr-0.5 inline size-3" />
-          {taskId.slice(0, 8)}…
-        </span>
+
+      {/* 过期态：有封面用封面兜底，叠提示 + 重新生成；无封面纯提示 */}
+      {videoUrl && expired && !isGenerating && (
+        <div className="absolute inset-0" data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
+          {posterUrl && <img src={posterUrl} alt={data.title} className="h-full w-full object-contain" draggable={false} />}
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/70 p-3 text-center backdrop-blur-sm">
+            <AlertCircle className="size-6 text-destructive" />
+            <span className="text-xs text-foreground">视频链接已过期（上游仅保留数小时）</span>
+            {onRetry && <RetryButton onRetry={() => onRetry(data)} />}
+          </div>
+        </div>
       )}
-      {taskId && onRefreshProgress && (
-        <button
-          type="button"
-          className="mt-1 inline-flex items-center gap-1 rounded-lg border border-border bg-background/80 px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={refreshing}
-          onClick={() => {
-            setRefreshing(true);
-            void Promise.resolve(onRefreshProgress(data)).finally(() => setRefreshing(false));
-          }}
+
+      {/* 错误态 */}
+      {isError && (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-3 text-center" data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
+          <AlertCircle className="size-6 text-destructive" />
+          <span className="line-clamp-3 text-xs text-destructive">{data.metadata?.errorDetails || "生成失败"}</span>
+          {onRetry && <RetryButton onRetry={() => onRetry(data)} />}
+        </div>
+      )}
+
+      {/* 空态：等待编排节点生成 */}
+      {!videoUrl && !isGenerating && !isError && (
+        <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-3 text-center text-muted-foreground" data-canvas-no-zoom>
+          <Film className="size-6 opacity-70" />
+          <p className="text-[11px] leading-snug">视频生成结果节点</p>
+        </div>
+      )}
+
+      {/* 生成中遮罩（可能盖在旧结果上，如重新生成场景） */}
+      {isGenerating && <NodeProgressOverlay data={data} status={status} onRefreshProgress={onRefreshProgress} />}
+
+      {/* 信息角标：时长（非生成中） */}
+      {videoUrl && !expired && !isGenerating && badgeText && (
+        <div className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white">{badgeText}</div>
+      )}
+
+      {/* 下载按钮：hover 出现，新窗口打开直链可另存（样式对齐图片节点的"存素材"） */}
+      {videoUrl && !expired && !isGenerating && (
+        <a
+          href={videoUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="下载视频"
+          data-canvas-no-zoom
+          className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-1 text-[10px] text-white opacity-0 transition-opacity hover:bg-black/70 group-hover:opacity-100"
+          onPointerDown={(event) => event.stopPropagation()}
         >
-          <RefreshCw className={cn("size-3.5", refreshing && "animate-spin")} />
-          获取当前进度
-        </button>
+          <Download className="size-3.5" /> 下载
+        </a>
       )}
     </div>
   );
