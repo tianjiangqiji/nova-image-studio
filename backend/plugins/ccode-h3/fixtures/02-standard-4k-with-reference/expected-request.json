@@ -1,0 +1,15 @@
+{
+  "model": "minimax-h3-original-cf-4k",
+  "method": "POST",
+  "url": "https://upstream.test/v1/videos",
+  "body": {
+    "model": "minimax-h3-original-cf-4k",
+    "prompt": "电影感运镜",
+    "seconds": "5",
+    "aspect_ratio": "16:9",
+    "size": "4K",
+    "images": ["https://host.test/api/nova/plugin-media/ref-1.png", "https://host.test/api/nova/plugin-media/ref-2.png"],
+    "reference_videos": ["https://host.test/api/nova/plugin-media/clip.mp4"],
+    "reference_audios": ["https://host.test/api/nova/plugin-media/bgm.mp3"]
+  }
+}

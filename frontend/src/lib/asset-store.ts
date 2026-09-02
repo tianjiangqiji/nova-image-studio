@@ -217,7 +217,12 @@ function openAssetsDB(): Promise<IDBDatabase | null> {
   return new Promise(resolve => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onerror = () => resolve(null);
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      // 备份导入等版本变更流程需要关闭连接时主动释放，避免对方被 blocked。
+      db.onversionchange = () => { try { db.close(); } catch { /* ignore */ } };
+      resolve(db);
+    };
     req.onupgradeneeded = event => {
       const db = (event.target as IDBOpenDBRequest).result;
       if (!db.objectStoreNames.contains(ASSETS_STORE)) {

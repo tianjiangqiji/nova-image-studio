@@ -1,4 +1,4 @@
-import type { CanvasNodeData } from "../types";
+import { CanvasNodeType, type CanvasNodeData } from "../types";
 
 export type MinimapLayout = {
   worldBounds: { x: number; y: number; w: number; h: number };
@@ -44,4 +44,13 @@ export function computeMinimapLayout(nodes: CanvasNodeData[], width: number, hei
   });
 
   return { worldBounds, scale, offset, toMinimap };
+}
+
+/** 节点类型 → 小图色块颜色（小地图与列表缩略图共用一套配色）。 */
+export function nodeMinimapColor(type: CanvasNodeType, fallback: string): string {
+  if (type === CanvasNodeType.Image) return "#10b981";
+  if (type === CanvasNodeType.Config) return "#60a5fa";
+  if (type === CanvasNodeType.Video) return "#a78bfa";
+  if (type === CanvasNodeType.Audio) return "#f59e0b";
+  return fallback;
 }

@@ -1,0 +1,10 @@
+{
+  "facets": { "tier": "standard", "resolution": "1080P" },
+  "fields": {
+    "mode": "multi-reference",
+    "aspectRatio": "21:9",
+    "seconds": 15,
+    "prompt": "一段会被上游拒绝的提示词"
+  },
+  "media": {}
+}

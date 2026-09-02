@@ -1,0 +1,11 @@
+{
+  "model": "minimax-h3-original-768p",
+  "method": "POST",
+  "url": "https://upstream.test/v1/videos",
+  "body": {
+    "model": "minimax-h3-original-768p",
+    "prompt": "无人机穿梭在赛博朋克霓虹雨夜中",
+    "seconds": "8",
+    "aspect_ratio": "9:16"
+  }
+}

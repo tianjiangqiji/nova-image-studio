@@ -1,0 +1,10 @@
+{
+  "facets": { "tier": "lite", "resolution": "768P" },
+  "fields": {
+    "mode": "multi-reference",
+    "aspectRatio": "9:16",
+    "seconds": 4,
+    "prompt": "极速出片"
+  },
+  "media": { "multiImage": ["https://host.test/api/nova/plugin-media/a.png"] }
+}

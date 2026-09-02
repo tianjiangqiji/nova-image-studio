@@ -1,11 +1,13 @@
 {
   "name": "nova-image-backend",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "private": true,
-  "description": "Nova Image 后端 - 任务队列和 API 服务器",
+  "description": "Nova Studio 后端 - 任务队列和 API 服务器",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "test": "node --test",
+    "plugins:verify": "node plugin-runtime/verify.js",
     "lint": "eslint"
   },
   "dependencies": {

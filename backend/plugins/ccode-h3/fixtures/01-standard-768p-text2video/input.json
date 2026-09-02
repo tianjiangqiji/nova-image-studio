@@ -1,0 +1,10 @@
+{
+  "facets": { "tier": "standard", "resolution": "768P" },
+  "fields": {
+    "mode": "multi-reference",
+    "aspectRatio": "9:16",
+    "seconds": 8,
+    "prompt": "无人机穿梭在赛博朋克霓虹雨夜中"
+  },
+  "media": {}
+}

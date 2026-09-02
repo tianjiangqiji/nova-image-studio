@@ -1,0 +1,175 @@
+{
+  "apiVersion": 1,
+  "priceQuantityField": "seconds",
+  "layout": {
+    "toolbar": ["$model", "mode", "$resolution", "aspectRatio", "seconds"],
+    "body": ["firstFrame", "lastFrame", "multiImage", "multiVideo", "multiAudio", "prompt"]
+  },
+  "modelSelector": {
+    "label": "模型与档位",
+    "familyLabel": "MiniMax H3",
+    "familyDescription": "按秒计费 · 4–15 秒 · 768P 至 4K",
+    "facets": [
+      { "key": "tier", "label": "档位", "icon": "sparkles", "control": "list" },
+      { "key": "resolution", "label": "分辨率", "icon": "maximize", "control": "list", "hideWhenSingle": true }
+    ],
+    "facetOptions": {
+      "tier": [
+        { "value": "standard", "label": "Standard", "fullLabel": "原版", "description": "全功能原版，支持首尾帧与全部参考素材" },
+        { "value": "comic", "label": "Comic", "fullLabel": "漫画版", "description": "漫剧特供风格，功能与原版一致" },
+        { "value": "lite", "label": "Lite", "fullLabel": "量化版", "description": "高性价比量化版，最多 4 张参考图，不支持视频/音频与首尾帧" }
+      ],
+      "resolution": [
+        { "value": "768P", "label": "768P" },
+        { "value": "1080P", "label": "1080P" },
+        { "value": "2K", "label": "2K" },
+        { "value": "4K", "label": "4K" }
+      ]
+    },
+    "variants": [
+      { "model": "minimax-h3-original-768p", "tier": "standard", "resolution": "768P" },
+      { "model": "minimax-h3-original-1080p", "tier": "standard", "resolution": "1080P" },
+      { "model": "minimax-h3-original-cf-2k", "tier": "standard", "resolution": "2K" },
+      { "model": "minimax-h3-original-cf-4k", "tier": "standard", "resolution": "4K" },
+      { "model": "minimax-h3-comic-768p", "tier": "comic", "resolution": "768P" },
+      { "model": "minimax-h3-comic-cf-2k", "tier": "comic", "resolution": "2K" },
+      { "model": "minimax-h3-comic-cf-4k", "tier": "comic", "resolution": "4K" },
+      { "model": "minimax-h3-quantized-768p", "tier": "lite", "resolution": "768P" }
+    ]
+  },
+  "fields": [
+    {
+      "key": "mode",
+      "type": "select",
+      "label": "生成模式",
+      "icon": "layers",
+      "default": "multi-reference",
+      "hideWhenSingle": true,
+      "options": [
+        {
+          "value": "multi-reference",
+          "label": "全能参考",
+          "description": "参考图片 / 视频 / 音频约束生成；不导入素材即为纯文生视频"
+        },
+        {
+          "value": "first-last-frame",
+          "label": "首尾帧 (FL2V)",
+          "description": "指定首帧与尾帧，生成过渡视频",
+          "availableWhen": { "tier": ["standard", "comic"] }
+        }
+      ]
+    },
+    {
+      "key": "aspectRatio",
+      "type": "select-grid",
+      "label": "画面比例",
+      "icon": "ratio",
+      "columns": 2,
+      "default": "9:16",
+      "options": [
+        { "value": "16:9", "label": "16:9", "description": "横屏 · 电脑/电视宽屏" },
+        { "value": "9:16", "label": "9:16", "description": "竖屏 · 手机短视频" },
+        { "value": "1:1", "label": "1:1", "description": "正方形 · 社交平台方图" },
+        { "value": "2:3", "label": "2:3", "description": "经典竖向画幅" },
+        { "value": "3:2", "label": "3:2", "description": "单反相机画幅" },
+        { "value": "3:4", "label": "3:4", "description": "平板/社交竖屏" },
+        { "value": "4:3", "label": "4:3", "description": "传统显示画幅" },
+        { "value": "21:9", "label": "21:9", "description": "电影级超宽屏" }
+      ]
+    },
+    {
+      "key": "seconds",
+      "type": "select-grid",
+      "label": "视频时长",
+      "icon": "clock",
+      "columns": 3,
+      "suffix": "秒",
+      "default": 4,
+      "options": [
+        { "value": 4, "label": "4" },
+        { "value": 5, "label": "5" },
+        { "value": 6, "label": "6" },
+        { "value": 7, "label": "7" },
+        { "value": 8, "label": "8" },
+        { "value": 9, "label": "9" },
+        { "value": 10, "label": "10" },
+        { "value": 11, "label": "11" },
+        { "value": 12, "label": "12" },
+        { "value": 13, "label": "13" },
+        { "value": 14, "label": "14" },
+        { "value": 15, "label": "15" }
+      ]
+    },
+    {
+      "key": "firstFrame",
+      "type": "media",
+      "kind": "images",
+      "style": "frame",
+      "label": "首帧",
+      "hint": "起始画面",
+      "required": true,
+      "showIf": { "mode": ["first-last-frame"] },
+      "maxCount": { "byFacet": "tier", "values": { "standard": 1, "comic": 1 }, "default": 0 }
+    },
+    {
+      "key": "lastFrame",
+      "type": "media",
+      "kind": "images",
+      "style": "frame",
+      "label": "尾帧",
+      "hint": "终止画面 · 可选",
+      "showIf": { "mode": ["first-last-frame"] },
+      "maxCount": { "byFacet": "tier", "values": { "standard": 1, "comic": 1 }, "default": 0 }
+    },
+    {
+      "key": "multiImage",
+      "type": "media",
+      "kind": "images",
+      "style": "thumbnail",
+      "label": "参考图片",
+      "hint": "可选提供参考图片、视频或音频，帮助模型更好地理解你想要的画面风格与节奏。可拖拽文件到此处。",
+      "requiredHint": "2K / 4K 由上游超分模型生成，必须至少提供 1 张参考图片。",
+      "requiredIf": { "resolution": ["2K", "4K"] },
+      "showIf": { "mode": ["multi-reference"] },
+      "maxCount": { "byFacet": "tier", "values": { "standard": 9, "comic": 9, "lite": 4 }, "default": 0 }
+    },
+    {
+      "key": "multiVideo",
+      "type": "media",
+      "kind": "videos",
+      "style": "chip",
+      "label": "参考视频",
+      "accent": "blue",
+      "showIf": { "mode": ["multi-reference"] },
+      "maxCount": { "byFacet": "tier", "values": { "standard": 3, "comic": 3 }, "default": 0 }
+    },
+    {
+      "key": "multiAudio",
+      "type": "media",
+      "kind": "audios",
+      "style": "chip",
+      "label": "参考音频",
+      "accent": "emerald",
+      "showIf": { "mode": ["multi-reference"] },
+      "maxCount": { "byFacet": "tier", "values": { "standard": 3, "comic": 3 }, "default": 0 }
+    },
+    {
+      "key": "prompt",
+      "type": "textarea",
+      "label": "提示词描述",
+      "icon": "clapperboard",
+      "required": true,
+      "maxLength": 5000,
+      "rows": 9,
+      "placeholder": "描述你想生成的视频画面，例如：无人机穿梭在赛博朋克霓虹雨夜中，电影级运镜，细腻水洼倒影...",
+      "presets": [
+        "电影感运镜，4K超高清画质，柔和光影，景深虚化",
+        "史诗级日落延时摄影，金色云层流动，壮丽自然风景",
+        "赛博朋克霓虹街道，雨夜积水倒影，电影质感",
+        "细腻特写微距镜头，光斑闪烁，细节分明",
+        "精美二次元动漫风格，唯美动态光影，生动表情",
+        "慢动作高速摄影，水滴飞溅，极具视觉冲击力"
+      ]
+    }
+  ]
+}

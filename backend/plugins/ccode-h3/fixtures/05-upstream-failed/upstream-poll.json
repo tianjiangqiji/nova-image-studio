@@ -1,0 +1,6 @@
+{
+  "id": "up-0005",
+  "status": "failed",
+  "progress": 12,
+  "error": { "message": "prompt rejected by content policy" }
+}

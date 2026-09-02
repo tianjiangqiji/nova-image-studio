@@ -609,3 +609,18 @@ body {
 .md-streaming :where(li > p) {
   margin: 0;
 }
+
+/* 不定量进度条：上游本轮没返回进度百分比时用它代替一个编造的数字 */
+@keyframes progress-indeterminate {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.animate-progress-indeterminate {
+  animation: progress-indeterminate 1.4s ease-in-out infinite;
+}

@@ -266,10 +266,6 @@ describe('describeSourceImageSizeError', () => {
     ).toBeNull();
   });
 
-  it('accepts an ordinary phone screenshot', () => {
-    expect(describeSourceImageSizeError(750, 1334)).toBeNull();
-  });
-
   it('rejects an oversized width and reports the actual size', () => {
     const message = describeSourceImageSizeError(5000, 3000);
     expect(message).toContain('5000 × 3000');

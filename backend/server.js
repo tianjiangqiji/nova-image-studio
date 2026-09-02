@@ -12,6 +12,13 @@ const { TAOBAO_EXTRACT_EXPRESSION } = require('./taobao-extract');
 const { buildDoubaoImagesUrl, resolveDoubaoImageSize, buildDoubaoImagePayload, DEFAULT_ARK_BASE_URL } = require('./doubao');
 const { buildDashScopeImageUrl, buildDashScopeImagePayload, extractDashScopeImageUrl, DEFAULT_DASHSCOPE_BASE_URL } = require('./alibaba-dashscope');
 
+// 视频插件系统。协议细节（发什么请求、怎么轮询、结果在哪）全在 backend/plugins/<id>/ 的
+// JSON 里，这里只负责调度与生命周期，与内置图片任务共用同一套队列。见 docs/plugins/。
+const pluginRegistry = require('./plugin-runtime/registry');
+const pluginExecutor = require('./plugin-runtime/executor');
+const { validateAndNormalizeInput, InputError } = require('./plugin-runtime/input');
+const { createMediaStore } = require('./plugin-runtime/media');
+
 const ENV_FILE_PATH = path.join(process.cwd(), '.env');
 const TASK_STATUS = {
   QUEUED: '排队中',
@@ -200,6 +207,13 @@ const pendingCountByIp = new Map(); // ip -> count
 const pendingCountByApiKeyHash = new Map(); // apiKeyHash -> count
 const queue = [];
 let activeCount = 0;
+
+/**
+ * 插件任务的上游实时进度与状态。这两个是过程量，不入库：服务器重启时所有未终态任务
+ * 一律标失败（见 initDatabase），重启后没有需要恢复的进度。
+ */
+const pluginTaskProgress = new Map(); // taskId -> { progress?: number, upstreamStatus?: string }
+const pluginTaskCache = new Map(); // taskId -> { lastPolledAt: number, cachedResponse: object, inFlightPromise: Promise|null }
 const runningTaskPromises = new Set();
 let isShuttingDown = false;
 let shutdownPromise = null;
@@ -470,6 +484,19 @@ function hashApiKey(apiKey) {
   return createHash('sha256').update(String(apiKey || '')).digest('hex').slice(0, 24);
 }
 
+/**
+ * 插件参考素材的存储。上游的视频接口只接受 URL，所以素材先落盘本机，
+ * 再把公网地址交给上游去拉；素材绑定任务后随任务一起清理。
+ */
+const pluginMedia = createMediaStore({
+  db,
+  getRuntimeEnv,
+  parseIntegerEnv,
+  createHttpError,
+  getClientIp,
+  normalizeBaseUrl,
+});
+
 function cleanupTaskRuntimeState(taskId) {
   const source = taskSources.get(taskId);
   if (source) {
@@ -495,6 +522,7 @@ function cleanupTaskRuntimeState(taskId) {
   apiKeys.delete(taskId);
   taskRefImages.delete(taskId);
   taskSources.delete(taskId);
+  pluginTaskProgress.delete(taskId);
 }
 
 function getPendingCountForSource(fieldName, value) {
@@ -776,6 +804,9 @@ function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_tasks_expires_at ON tasks(expires_at);
     CREATE INDEX IF NOT EXISTS idx_task_items_task_id ON task_items(task_id);
   `);
+
+  // 插件素材表（plugin_media）与任务表同库，任务清理即素材清理
+  pluginMedia.initSchema();
 
   const now = new Date().toISOString();
   db.prepare('UPDATE tasks SET status = ? WHERE status = ?').run(TASK_STATUS.QUEUED, TASK_STATUS.LEGACY_QUEUED);
@@ -1731,11 +1762,9 @@ function inferAspectRatioFromPrompt(prompt) {
 }
 
 function resolveGeminiAspectRatio(request = {}) {
-  const fromPrompt = inferAspectRatioFromPrompt(request.prompt);
-  if (fromPrompt) return fromPrompt;
   const rawRatio = String(request.aspectRatio || '').trim();
   if (GEMINI_NATIVE_ASPECT_RATIOS.has(rawRatio)) return rawRatio;
-  return '1:1';
+  return inferAspectRatioFromPrompt(request.prompt) || '1:1';
 }
 
 function resolveGeminiImageConfig(request = {}) {
@@ -1791,9 +1820,12 @@ function drainQueue() {
   const maxConcurrency = getMaxServerConcurrency();
   while (queue.length > 0) {
     const taskId = queue[0];
-    const task = db.prepare('SELECT request_json FROM tasks WHERE id = ?').get(taskId);
+    const task = db.prepare('SELECT mode, request_json FROM tasks WHERE id = ?').get(taskId);
     const req = task ? JSON.parse(task.request_json) : null;
-    const imageSlots = req?.parallelCount || 1;
+    const isPluginTask = task?.mode === 'plugin';
+    // 插件任务每个占 1 个名额，且名额从「开始跑」一直持有到「轮询出终态」，
+    // 避免几十个视频任务同时压在上游。
+    const imageSlots = isPluginTask ? 1 : (req?.parallelCount || 1);
 
     // 容量足够 → 放行。容量不足时唯一例外：当前空闲（activeCount===0）且该任务
     // 自身就超过总并发，允许其独占运行（否则永远无法被调度）；其余情况一律等待
@@ -1804,7 +1836,7 @@ function drainQueue() {
 
     queue.shift();
     activeCount += imageSlots;
-    const runPromise = runTask(taskId).finally(() => {
+    const runPromise = (isPluginTask ? runPluginTask(taskId) : runTask(taskId)).finally(() => {
       activeCount -= imageSlots;
       runningTaskPromises.delete(runPromise);
       drainQueue();
@@ -1902,12 +1934,347 @@ async function runTask(taskId) {
   broadcastQueueStatus();
 }
 
+// ===== 插件任务 =====
+//
+// 这一段刻意不认识任何具体上游：模型清单、请求体、状态词表、结果路径全部来自
+// backend/plugins/<id>/ 下的 JSON。这里只做「落库 → 排队 → 创建上游任务 →
+// 轮询到终态 → 归一化产物」的生命周期，以及失败后的清理。
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * 创建插件任务。以 queued 落库后进队列，由 drainQueue 按并发名额调度；
+ * 上游创建挪到 runPluginTask 里，这样名额从「开始跑」一直持有到「轮询出终态」。
+ */
+function createPluginTask(body, req) {
+  if (!body || typeof body !== 'object') throw new Error('请求体不能为空');
+  if (typeof body.apiKey !== 'string' || body.apiKey.trim().length === 0) throw new Error('缺少 API 密钥');
+
+  const plugin = pluginRegistry.getPlugin(body.pluginId);
+  if (!plugin) {
+    throw createHttpError(404, 'PLUGIN_NOT_FOUND', `插件 ${body.pluginId || ''} 未安装或加载失败`);
+  }
+
+  // 权威校验：前端也做同一套判断，但那只是为了即时反馈
+  let normalized;
+  try {
+    normalized = validateAndNormalizeInput(plugin, body);
+  } catch (error) {
+    if (error instanceof InputError) {
+      throw createHttpError(400, 'PLUGIN_INPUT_INVALID', error.message);
+    }
+    throw error;
+  }
+
+  const baseUrl = normalizeBaseUrl(body.baseUrl) || plugin.manifest.credential.defaultBaseUrl || '';
+  if (!baseUrl) {
+    throw new Error('缺少 API 基地址，请在设置中填写');
+  }
+  // 出网闸门在这里先跑一次：让「主机没申报」在提交那一刻就报错，而不是排到队首才失败
+  pluginExecutor.assertUrlAllowed(plugin, `${baseUrl}/`, 'API 基地址');
+
+  const limitConfig = getLimitConfig();
+  if (isRejectNewTasksEnabled()) {
+    throw createHttpError(503, 'SERVER_NOT_ACCEPTING_TASKS', LIMIT_ERROR_MESSAGES.notAcceptingTasks, limitConfig.retryAfterSeconds);
+  }
+  const source = enforceRateLimit(req, body, limitConfig);
+  enforceQueueCapacity(source, limitConfig);
+
+  const taskId = randomUUID();
+  const now = new Date().toISOString();
+  const requestForDb = {
+    mode: 'plugin',
+    pluginId: plugin.id,
+    pluginVersion: plugin.manifest.version,
+    model: normalized.model,
+    facets: normalized.facets,
+    fields: normalized.fields,
+    media: normalized.media,
+    baseUrl,
+  };
+
+  db.prepare(`
+    INSERT INTO tasks (id, status, mode, request_json, created_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(
+    taskId,
+    TASK_STATUS.QUEUED,
+    'plugin',
+    JSON.stringify(requestForDb),
+    now,
+    new Date(Date.now() + TASK_TTL_MS).toISOString(),
+  );
+
+  // 素材绑定到任务：此后随任务一起清理，也不再参与去重复用
+  pluginMedia.bindToTask(taskId, normalized.mediaUrls);
+
+  // apiKey 只留在内存里，从不入库
+  apiKeys.set(taskId, body.apiKey);
+  taskSources.set(taskId, source);
+  if (source.ip) pendingCountByIp.set(source.ip, (pendingCountByIp.get(source.ip) || 0) + 1);
+  if (source.apiKeyHash) pendingCountByApiKeyHash.set(source.apiKeyHash, (pendingCountByApiKeyHash.get(source.apiKeyHash) || 0) + 1);
+
+  queue.push(taskId);
+  broadcastTask(taskId);
+  broadcastQueueStatus();
+  drainQueue();
+
+  return taskId;
+}
+
+/** 把插件任务标为失败，并立刻释放素材与图片占用的磁盘——失败任务没有任何产出值得保留。 */
+function failPluginTask(taskId, message) {
+  const completedAt = new Date().toISOString();
+  db.prepare(`
+    UPDATE tasks SET status = 'failed', error = ?, completed_at = ?, expires_at = ? WHERE id = ?
+  `).run(message, completedAt, new Date(Date.now() + TASK_TTL_MS).toISOString(), taskId);
+  pluginTaskCache.delete(taskId);
+  deleteTaskImageFiles(taskId);
+  pluginMedia.deleteTaskMedia(taskId);
+  cleanupTaskRuntimeState(taskId);
+  broadcastTask(taskId);
+  broadcastQueueStatus();
+}
+
+/** 缓存一份序列化结果，供前端 GET 在两次后端轮询之间直接命中。 */
+function cachePluginTaskResponse(taskId) {
+  const serialized = serializeTask(db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId));
+  pluginTaskCache.set(taskId, {
+    lastPolledAt: Date.now(),
+    cachedResponse: serialized,
+    inFlightPromise: null,
+  });
+  return serialized;
+}
+
+/**
+ * 向上游查一次状态并把终态写回库。返回归一化后的状态。
+ * 后端轮询循环与前端 GET 共用这一份逻辑，避免两处解析上游响应。
+ */
+async function pollPluginTaskOnce(taskId, plugin, context) {
+  const outcome = await pluginExecutor.pollTask(plugin, context);
+
+  // 请求本身失败时 pollTask 会回 processing 且不带 progress，这时保持上一次成功读数——
+  // 那是几秒前的真实值，比因为一次抖动就把进度条打回未知要好。
+  if (outcome.state !== 'processing' || outcome.progress !== undefined) {
+    pluginTaskProgress.set(taskId, {
+      progress: outcome.progress,
+      upstreamStatus: outcome.state,
+    });
+  }
+
+  if (outcome.state === 'completed') {
+    const completedAt = new Date().toISOString();
+    db.prepare("UPDATE tasks SET status = 'completed', result_json = ?, completed_at = ?, expires_at = ? WHERE id = ?")
+      .run(
+        JSON.stringify({ assets: outcome.assets }),
+        completedAt,
+        new Date(Date.now() + TASK_TTL_MS).toISOString(),
+        taskId,
+      );
+    cachePluginTaskResponse(taskId);
+    broadcastTask(taskId);
+    return 'completed';
+  }
+
+  if (outcome.state === 'failed') {
+    failPluginTask(taskId, outcome.error || '生成失败');
+    return 'failed';
+  }
+
+  cachePluginTaskResponse(taskId);
+  return outcome.state;
+}
+
+/**
+ * 插件任务的执行体：创建上游任务 → 轮询到终态。
+ * 超过 provider 申报的上限就认失败，避免上游卡死永久占着并发名额。
+ */
+async function runPluginTask(taskId) {
+  const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+  const apiKey = apiKeys.get(taskId);
+  if (!task || !apiKey || ![TASK_STATUS.QUEUED, TASK_STATUS.LEGACY_QUEUED].includes(task.status)) {
+    cleanupTaskRuntimeState(taskId);
+    return;
+  }
+
+  const request = JSON.parse(task.request_json);
+  const plugin = pluginRegistry.getPlugin(request.pluginId);
+  if (!plugin) {
+    failPluginTask(taskId, `插件 ${request.pluginId} 已被移除，任务无法继续`);
+    return;
+  }
+
+  db.prepare("UPDATE tasks SET status = 'processing' WHERE id = ?").run(taskId);
+  broadcastTask(taskId);
+  broadcastQueueStatus();
+
+  const baseContext = {
+    plugin,
+    baseUrl: request.baseUrl,
+    apiKey,
+    model: request.model,
+    facets: request.facets,
+    fields: request.fields,
+    media: request.media,
+  };
+
+  let upstreamTaskId;
+  try {
+    const submitted = await pluginExecutor.submitTask(plugin, pluginExecutor.buildContext(baseContext));
+    upstreamTaskId = submitted.upstreamTaskId;
+
+    // 记下上游 ID：前端 GET 与后续轮询都要用
+    db.prepare('UPDATE tasks SET request_json = ? WHERE id = ?')
+      .run(JSON.stringify({ ...request, upstreamTaskId }), taskId);
+
+    // 少数上游在创建那一刻就直接返回成品，省掉一整轮轮询
+    if (submitted.immediate) {
+      const completedAt = new Date().toISOString();
+      db.prepare("UPDATE tasks SET status = 'completed', result_json = ?, completed_at = ?, expires_at = ? WHERE id = ?")
+        .run(
+          JSON.stringify({ assets: submitted.immediate.assets }),
+          completedAt,
+          new Date(Date.now() + TASK_TTL_MS).toISOString(),
+          taskId,
+        );
+      pluginTaskProgress.set(taskId, { progress: 100, upstreamStatus: 'completed' });
+      cachePluginTaskResponse(taskId);
+      cleanupTaskRuntimeState(taskId);
+      broadcastTask(taskId);
+      broadcastQueueStatus();
+      return;
+    }
+  } catch (error) {
+    failPluginTask(taskId, normalizePluginError(error));
+    return;
+  }
+
+  const { intervalMs, maxTotalMs } = pluginExecutor.resolvePollTiming(plugin);
+  const deadline = Date.now() + maxTotalMs;
+  const pollContext = pluginExecutor.buildContext({ ...baseContext, upstreamTaskId });
+
+  while (Date.now() < deadline) {
+    await sleep(intervalMs);
+
+    // 任务被删除 / 过期就别再轮询了
+    const stillThere = db.prepare('SELECT status FROM tasks WHERE id = ?').get(taskId);
+    if (!stillThere) {
+      pluginTaskCache.delete(taskId);
+      cleanupTaskRuntimeState(taskId);
+      return;
+    }
+    if (stillThere.status === 'completed' || stillThere.status === 'failed') {
+      cleanupTaskRuntimeState(taskId);
+      return;
+    }
+
+    try {
+      const state = await pollPluginTaskOnce(taskId, plugin, pollContext);
+      if (state === 'completed' || state === 'failed') {
+        cleanupTaskRuntimeState(taskId);
+        broadcastQueueStatus();
+        return;
+      }
+    } catch (error) {
+      // 单次轮询失败不判死刑，等下一轮；上游抖动很常见
+      console.warn(`[plugin-task] 轮询失败 taskId=${taskId}:`, error?.message || error);
+    }
+  }
+
+  failPluginTask(taskId, `生成超时（超过 ${Math.round(maxTotalMs / 60000)} 分钟仍未完成），请重试`);
+}
+
+/**
+ * 插件任务的错误归一化。不能直接用 normalizeError——它的超时分支写的是
+ * 「高分辨率图片生成需要更长时间」，套到视频任务上会给出误导性的提示。
+ */
+function normalizePluginError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/failed to fetch|fetch failed|networkerror|network request failed|load failed|econnreset|socket hang up|terminated/i.test(message)) {
+    return '连接上游失败，请检查服务器网络连接后重试。';
+  }
+  if (/abort|timeout|timed out/i.test(message)) {
+    return '上游创建任务超时，请稍后重试。';
+  }
+  return message.length > 200 ? `${message.slice(0, 200)}…` : message;
+}
+
+/**
+ * 前端 GET 用。状态推进由 runPluginTask 的后端轮询负责，这里只读库/缓存；
+ * 仅当任务已在跑但后端轮询还没写回时，才顺带补一次上游查询。
+ */
+async function getPluginTaskForClient(taskId) {
+  const row = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
+  if (!row) {
+    return { id: taskId, status: 'expired', error: '该任务已超出取回时间' };
+  }
+  if (row.status === 'completed' || row.status === 'failed') {
+    return serializeTask(row);
+  }
+
+  const request = parseJsonSafely(row.request_json) || {};
+  // 还没拿到上游 ID 说明仍在本地队列里排队，直接回当前状态
+  if (!request.upstreamTaskId) return serializeTask(row);
+
+  const plugin = pluginRegistry.getPlugin(request.pluginId);
+  const apiKey = apiKeys.get(taskId);
+  if (!plugin || !apiKey) return serializeTask(row);
+
+  const now = Date.now();
+  const cached = pluginTaskCache.get(taskId);
+  if (cached) {
+    if (cached.inFlightPromise) return cached.inFlightPromise;
+    if (now - cached.lastPolledAt < 5000 && cached.cachedResponse) return cached.cachedResponse;
+  }
+
+  const context = pluginExecutor.buildContext({
+    plugin,
+    baseUrl: request.baseUrl,
+    apiKey,
+    model: request.model,
+    facets: request.facets,
+    fields: request.fields,
+    media: request.media,
+    upstreamTaskId: request.upstreamTaskId,
+  });
+
+  const inFlightPromise = (async () => {
+    try {
+      await pollPluginTaskOnce(taskId, plugin, context);
+    } catch (error) {
+      console.warn(`[plugin-task] 前端触发的轮询失败 taskId=${taskId}:`, error?.message || error);
+    } finally {
+      const entry = pluginTaskCache.get(taskId);
+      if (entry) entry.inFlightPromise = null;
+    }
+    return serializeTask(db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId));
+  })();
+
+  if (cached) {
+    cached.inFlightPromise = inFlightPromise;
+  } else {
+    pluginTaskCache.set(taskId, {
+      lastPolledAt: now,
+      cachedResponse: serializeTask(row),
+      inFlightPromise,
+    });
+  }
+  return inFlightPromise;
+}
+
 function serializeTask(task) {
   if (!task) return null;
   if (task.expires_at && Date.parse(task.expires_at) <= Date.now()) {
     return { id: task.id, status: 'expired', error: '该任务已超出取回时间' };
   }
   const result = task.result_json ? JSON.parse(task.result_json) : undefined;
+  // 插件任务附带上游实时进度。status 仍是本机队列状态（排队中 = 等本机并发名额），
+  // upstreamStatus 才是上游那边的状态，两者不是一回事，都要给前端。
+  const live = task.mode === 'plugin' ? pluginTaskProgress.get(task.id) : undefined;
+  const pluginMeta = task.mode === 'plugin' ? readPluginTaskMeta(task) : undefined;
   return {
     id: task.id,
     status: task.status,
@@ -1918,11 +2285,28 @@ function serializeTask(task) {
     createdAt: task.created_at,
     completedAt: task.completed_at,
     expiresAt: task.expires_at,
+    ...(pluginMeta || {}),
+    ...(typeof live?.progress === 'number' ? { progress: live.progress } : {}),
+    ...(live?.upstreamStatus ? { upstreamStatus: live.upstreamStatus } : {}),
+  };
+}
+
+/** 从 request_json 里取出可以安全下发的插件元信息（不含 apiKey——它从不入库）。 */
+function readPluginTaskMeta(task) {
+  const request = parseJsonSafely(task.request_json);
+  if (!request) return {};
+  return {
+    pluginId: request.pluginId,
+    pluginVersion: request.pluginVersion,
+    model: request.model,
   };
 }
 
 function deleteTask(taskId) {
   deleteTaskImageFiles(taskId);
+  // 素材与任务绑定：任务清理即素材清理
+  pluginMedia.deleteTaskMedia(taskId);
+  pluginTaskCache.delete(taskId);
   const tx = db.transaction(() => {
     db.prepare('DELETE FROM task_items WHERE task_id = ?').run(taskId);
     db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
@@ -2208,7 +2592,22 @@ function registerShutdownHandlers() {
   });
 }
 
-async function handleApi(req, res, pathname) {
+/**
+ * 前端已收妥结果，把 TTL 收到一个短宽限期即可回收。
+ * 内置任务与插件任务共用同一段逻辑。
+ */
+function ackTask(res, taskId) {
+  const ACK_GRACE_MS = 120 * 1000;
+  const existing = db.prepare('SELECT id FROM tasks WHERE id = ?').get(taskId);
+  if (existing) {
+    db.prepare('UPDATE tasks SET expires_at = ? WHERE id = ?').run(
+      new Date(Date.now() + ACK_GRACE_MS).toISOString(), taskId,
+    );
+  }
+  sendJson(res, 200, { ok: true });
+}
+
+async function handleApi(req, res, pathname, searchParams) {
   try {
     const apiPathname = pathname.replace(/\/+$/, '');
 
@@ -2834,6 +3233,62 @@ async function handleApi(req, res, pathname) {
       return true;
     }
 
+    // ===== 视频插件 =====
+
+    if (req.method === 'GET' && apiPathname === '/api/nova/plugins') {
+      // ?reload=1 重新扫描插件目录，供管理员放完插件后免重启生效。
+      // 代价只是读几个小 JSON 文件，因此不额外设限。
+      if (searchParams?.get('reload') === '1') pluginRegistry.reload();
+      sendJson(res, 200, {
+        ...pluginRegistry.describeRegistryForClient(),
+        mediaLimits: pluginMedia.getLimitsForClient(),
+      });
+      return true;
+    }
+
+    if (req.method === 'POST' && apiPathname === '/api/nova/plugin-media') {
+      const pluginId = String(searchParams?.get('pluginId') || '');
+      const kind = String(searchParams?.get('kind') || 'images');
+      const plugin = pluginRegistry.getPlugin(pluginId);
+      if (!plugin) {
+        throw createHttpError(404, 'PLUGIN_NOT_FOUND', `插件 ${pluginId} 未安装或加载失败`);
+      }
+      const uploaded = await pluginMedia.handleUpload(req, kind, plugin);
+      sendJson(res, 200, uploaded);
+      return true;
+    }
+
+    // 素材回读：上游要匿名拉取，所以这里不鉴权（文件名是随机 UUID）
+    const pluginMediaMatch = apiPathname.match(/^\/api\/nova\/plugin-media\/([^/]+)$/);
+    if (pluginMediaMatch && (req.method === 'GET' || req.method === 'HEAD')) {
+      pluginMedia.serveFile(res, decodeURIComponent(pluginMediaMatch[1]));
+      return true;
+    }
+
+    if (req.method === 'POST' && apiPathname === '/api/nova/plugin-tasks') {
+      const body = await readJsonBody(req);
+      const taskId = createPluginTask(body, req);
+      sendJson(res, 202, { taskId });
+      return true;
+    }
+
+    const pluginTaskMatch = apiPathname.match(/^\/api\/nova\/plugin-tasks\/([^/]+)(?:\/(ack))?$/);
+    if (pluginTaskMatch) {
+      const pluginTaskId = decodeURIComponent(pluginTaskMatch[1]);
+      const pluginAction = pluginTaskMatch[2];
+
+      if (req.method === 'GET' && !pluginAction) {
+        const task = await getPluginTaskForClient(pluginTaskId);
+        sendJson(res, task ? 200 : 404, task || { id: pluginTaskId, status: 'expired', error: '该任务已超出取回时间' });
+        return true;
+      }
+
+      if (req.method === 'POST' && pluginAction === 'ack') {
+        ackTask(res, pluginTaskId);
+        return true;
+      }
+    }
+
     const match = apiPathname.match(/^\/api\/nova\/tasks\/([^/]+)(?:\/(ack))?$/);
     if (!match) return false;
     const taskId = decodeURIComponent(match[1]);
@@ -2846,14 +3301,7 @@ async function handleApi(req, res, pathname) {
     }
 
     if (req.method === 'POST' && action === 'ack') {
-      const ACK_GRACE_MS = 120 * 1000;
-      const existing = db.prepare('SELECT id FROM tasks WHERE id = ?').get(taskId);
-      if (existing) {
-        db.prepare('UPDATE tasks SET expires_at = ? WHERE id = ?').run(
-          new Date(Date.now() + ACK_GRACE_MS).toISOString(), taskId
-        );
-      }
-      sendJson(res, 200, { ok: true });
+      ackTask(res, taskId);
       return true;
     }
 
@@ -2875,7 +3323,11 @@ initDatabase();
 ensureImageDir();
 ensureCdpDir();
 cleanupExpiredTasks();
+pluginMedia.cleanupExpired();
+// 启动时把插件扫一遍：加载成功/失败都会打日志，管理员放错文件时立刻能看到
+pluginRegistry.listPlugins();
 setInterval(cleanupExpiredTasks, CLEANUP_INTERVAL_MS).unref();
+setInterval(() => pluginMedia.cleanupExpired(), CLEANUP_INTERVAL_MS).unref();
 setInterval(cleanupRateLimitBuckets, CLEANUP_INTERVAL_MS).unref();
 
 const startServer = () => {
@@ -2883,7 +3335,7 @@ const startServer = () => {
   const httpServer = http.createServer(async (req, res) => {
     const parsedUrl = new URL(req.url || '/', `http://${req.headers.host || `${HOSTNAME}:${PORT}`}`);
     if (parsedUrl.pathname?.startsWith('/api/nova/')) {
-      const handled = await handleApi(req, res, parsedUrl.pathname);
+      const handled = await handleApi(req, res, parsedUrl.pathname, parsedUrl.searchParams);
       if (handled || res.headersSent || res.writableEnded) return;
     }
     if (!IS_DEV) {
@@ -2921,7 +3373,7 @@ const startServer = () => {
   httpServer.listen(PORT, HOSTNAME, () => {
     const localUrl = `http://localhost:${PORT}`;
     const listenUrl = `http://${HOSTNAME}:${PORT}`;
-    console.log(`Nova Image server ready on ${localUrl}`);
+    console.log(`Nova Studio server ready on ${localUrl}`);
     if (HOSTNAME !== 'localhost' && HOSTNAME !== '127.0.0.1') {
       console.log(`Listening on ${listenUrl}`);
     }

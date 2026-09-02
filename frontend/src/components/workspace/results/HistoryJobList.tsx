@@ -221,6 +221,7 @@ function VirtualJobList({
         minHeight: jobs.length > 0 ? '200px' : '0',
         overflow: 'auto',
         overflowX: 'hidden',
+        paddingTop: '8px',
       }}
     >
       <div

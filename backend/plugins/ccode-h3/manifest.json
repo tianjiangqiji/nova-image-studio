@@ -1,0 +1,89 @@
+{
+  "apiVersion": 1,
+  "id": "ccode-h3",
+  "name": "Ccode H3 视频",
+  "version": "1.0.0",
+  "kind": "video",
+  "mode": "declarative",
+  "author": "Ccode",
+  "description": "MiniMax H3 系列视频生成。原版 / 漫画版 / 量化版三档，768P 至 4K，支持参考图片、视频、音频与首尾帧。",
+  "homepage": "https://pro.ccode.vip",
+  "outputs": ["video"],
+  "credential": {
+    "source": "client",
+    "label": "Ccode API Key",
+    "defaultBaseUrl": "https://pro.ccode.vip",
+    "helpUrl": "https://pro.ccode.vip"
+  },
+  "permissions": {
+    "hosts": ["pro.ccode.vip"]
+  },
+  "media": {
+    "images": { "maxCount": 9 },
+    "videos": { "maxCount": 3 },
+    "audios": { "maxCount": 3 }
+  },
+  "runtime": {
+    "submitTimeoutMs": 90000,
+    "pollIntervalMs": 12000,
+    "maxPollMs": 1800000
+  },
+  "models": [
+    {
+      "id": "minimax-h3-original-768p",
+      "name": "MiniMax H3 原版 768P",
+      "shortName": "H3 原版 768P",
+      "description": "文生视频，可使用参考素材",
+      "price": { "unit": "per-second", "amount": 0.15, "currency": "CNY" }
+    },
+    {
+      "id": "minimax-h3-original-1080p",
+      "name": "MiniMax H3 原版 1080P",
+      "shortName": "H3 原版 1080P",
+      "description": "高清文生视频，可使用参考素材",
+      "price": { "unit": "per-second", "amount": 0.2, "currency": "CNY" }
+    },
+    {
+      "id": "minimax-h3-original-cf-2k",
+      "name": "MiniMax H3 原版 2K",
+      "shortName": "H3 原版 2K",
+      "description": "2K 超清，必须提供参考图片",
+      "price": { "unit": "per-second", "amount": 0.23, "currency": "CNY" }
+    },
+    {
+      "id": "minimax-h3-original-cf-4k",
+      "name": "MiniMax H3 原版 4K",
+      "shortName": "H3 原版 4K",
+      "description": "4K 极清，必须提供参考图片",
+      "price": { "unit": "per-second", "amount": 0.29, "currency": "CNY" }
+    },
+    {
+      "id": "minimax-h3-comic-768p",
+      "name": "MiniMax H3 漫画版 768P",
+      "shortName": "H3 漫画 768P",
+      "description": "漫剧特供风格，可使用参考素材",
+      "price": { "unit": "per-second", "amount": 0.19, "currency": "CNY" }
+    },
+    {
+      "id": "minimax-h3-comic-cf-2k",
+      "name": "MiniMax H3 漫画版 2K",
+      "shortName": "H3 漫画 2K",
+      "description": "漫剧 2K 超清，必须提供参考图片",
+      "price": { "unit": "per-second", "amount": 0.27, "currency": "CNY" }
+    },
+    {
+      "id": "minimax-h3-comic-cf-4k",
+      "name": "MiniMax H3 漫画版 4K",
+      "shortName": "H3 漫画 4K",
+      "description": "漫剧 4K 极清，必须提供参考图片",
+      "price": { "unit": "per-second", "amount": 0.33, "currency": "CNY" }
+    },
+    {
+      "id": "minimax-h3-quantized-768p",
+      "name": "MiniMax H3 量化版 768P",
+      "shortName": "H3 量化 768P",
+      "description": "极速量化版，高性价比",
+      "price": { "unit": "per-second", "amount": 0.08, "currency": "CNY" }
+    }
+  ]
+}

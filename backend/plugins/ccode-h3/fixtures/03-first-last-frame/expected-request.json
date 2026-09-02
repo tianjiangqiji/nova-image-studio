@@ -1,0 +1,11 @@
+{
+  "model": "minimax-h3-comic-768p",
+  "body": {
+    "model": "minimax-h3-comic-768p",
+    "prompt": "从白天过渡到夜晚",
+    "seconds": "6",
+    "aspect_ratio": "1:1",
+    "workflow_id": "fl2v",
+    "images": ["https://host.test/api/nova/plugin-media/first.png", "https://host.test/api/nova/plugin-media/last.png"]
+  }
+}

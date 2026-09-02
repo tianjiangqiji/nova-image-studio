@@ -1,0 +1,10 @@
+{
+  "model": "minimax-h3-quantized-768p",
+  "body": {
+    "model": "minimax-h3-quantized-768p",
+    "prompt": "极速出片",
+    "seconds": "4",
+    "aspect_ratio": "9:16",
+    "images": ["https://host.test/api/nova/plugin-media/a.png"]
+  }
+}

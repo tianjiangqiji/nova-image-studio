@@ -28,6 +28,14 @@ backend/nova-images/
 backend/data/
 backend/ccode-tasks.sqlite*
 backend/ccode-images/
+
+# 插件包（backend/plugins/）
+# ccode-h3 随仓库分发：它既是参考实现，也是协议的测试基线——后端测试和前端
+# schema 测试都直接读它的真实 JSON，忽略掉会让 clone 下来的仓库测试跑不过。
+# 其余插件不进主仓库：官方合集在独立的插件仓库维护，运维直接把目录放进
+# backend/plugins/ 即可，这条规则保证工作副本不会因此变脏。
+backend/plugins/*
+!backend/plugins/ccode-h3/
 # IDE/Editor configs
 .arts/
 .claude/
@@ -37,7 +45,7 @@ backend/ccode-images/
 .trae/
 .codex/
 .agents/
-/docs/
+# docs/ 随仓库分发（README 截图 + 插件开发文档），不再忽略
 
 data/
 # Docker Compose 运行时在根目录复制的配置（勿提交）

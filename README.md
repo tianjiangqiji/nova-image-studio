@@ -1,10 +1,12 @@
-# Nova Image Studio
+# Nova Studio
 
 <div align="center">
 
-**自托管的 AI 图像生成工作台 · 自定义模型 · 多模式 · PWA · 实时任务**
+**English** · [简体中文](README.zh-CN.md)
 
-[![Version](https://img.shields.io/badge/version-v3.2.0-blue.svg)](https://github.com)
+**Self-hosted AI video/image generation workbench · bring your own models · multi-mode · PWA · live task updates**
+
+[![Version](https://img.shields.io/badge/version-v3.3.0-blue.svg)](https://github.com)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org)
@@ -14,272 +16,329 @@
 
 ---
 
-## 📖 简介
+## 📖 Overview
 
-Nova Image Studio（简称 Nova Image）是一个面向个人/团队的 AI 图像生成工作台。前端使用 Next.js 16 + React 19 静态导出（PWA），后端是轻量 Node.js 服务（`server.js` + SQLite + WebSocket），统一调度任务并代理图像生成 API。
+Nova Studio is an AI video/image generation workbench for individuals and small teams. The frontend is a Next.js 16 + React 19 static export (PWA); the backend is a small Node.js service (`server.js` + SQLite + WebSocket) that schedules tasks and proxies generation APIs.
 
-**开源版特性：**
-- 支持分别配置图片模型与文本模型，模型级独立保存 API Key 与 Base URL
-- 用户自定义模型列表和 API 端点，后端按协议路由并透传已配置参数
-- 所有配置存储在浏览器 localStorage
-- 文字模型支持 Google（generateContent）和 OpenAI（Response 协议）
+**What the open-source edition gives you:**
 
-> 当前版本：**v3.2.0**
+- Image models and text models are configured separately, each with its own API key and base URL
+- You define the model list and endpoints yourself; the backend routes by protocol and passes your parameters through
+- All client configuration lives in the browser's localStorage
+- Text models support Google (`generateContent`) and OpenAI (Responses protocol)
+- **Video generation is fully plugin-based**: the host ships no upstream video protocol at all — capability comes from plugin packs
 
-## 💎 赞助商
+> Current version: **v3.3.0**
 
-期待您的赞助
+## 📚 Documentation
+
+Everything lives under [`docs/`](docs/). The plugin protocol docs are written in Chinese.
+
+| I want to… | Go here |
+| --- | --- |
+| **Write a video plugin** | **[docs/plugins/](docs/plugins/)** ← start here |
+| Install a ready-made plugin | [nova-studio-plugins](https://github.com/tianjiangqiji/nova-studio-plugins) (official collection + template) |
+| Get a working plugin in 10 minutes | [docs/plugins/quickstart.md](docs/plugins/quickstart.md) |
+| Have an AI write the plugin for me | [docs/plugins/LLM.md](docs/plugins/LLM.md) (paste the whole file into your AI) |
+| Look up a protocol field | [manifest](docs/plugins/manifest.md) · [ui.schema](docs/plugins/ui-schema.md) · [provider](docs/plugins/provider.md) |
+| Debug a plugin that won't load / a failing task | [docs/plugins/errors.md](docs/plugins/errors.md) |
+| Copy a known-good pattern | [docs/plugins/cookbook.md](docs/plugins/cookbook.md) |
+| Understand the task lifecycle | [docs/plugins/lifecycle.md](docs/plugins/lifecycle.md) |
+
+## 💎 Sponsors
+
+Your sponsorship is welcome.
 
 ---
 
-## 🖼️ UI 预览
+## 🖼️ UI Preview
 
-### 生图工作台
+### Image workbench
 
-| 宽屏 | 窄屏 | 手机版 |
+| Wide | Narrow | Mobile |
 |:---:|:---:|:---:|
-| ![生图工作台宽屏](doc/生图工作台宽屏.png) | ![生图工作台窄屏](doc/生图工作台窄屏.png) | ![生图工作台手机版](doc/生图工作台手机版.png) |
+| ![wide](docs/images/生图工作台宽屏.png) | ![narrow](docs/images/生图工作台窄屏.png) | ![mobile](docs/images/生图工作台手机版.png) |
 
-### UI设计模式（图片切图 + 网页复刻）
+### Video workbench (plugin-driven)
 
-从一张 UI 原图出发：AI 自动拆图 → 切图编辑器手动调整 → agent 多轮对话复刻网页 → 导出完整设计包。
+The whole left-hand form is rendered from the plugin's `ui.schema.json` — tiers, resolutions, durations and media slots are all declared by the plugin; the host knows nothing about any specific upstream. Credentials are filled in per plugin under Settings → Plugins.
 
-| ① 待复刻原图 | ② 导入并开始拆图 | ③ 自动拆图 + 手动调整 | ④ 开始生成网页复刻 |
-|:---:|:---:|:---:|:---:|
-| ![待复刻原图](doc/待复刻原图.png) | ![导入并开始拆图](doc/导入并开始拆图.png) | ![完成自动拆图并手动调整](doc/完成自动拆图并手动调整或拆图.png) | ![开始生成网页复刻](doc/开始生成网页复刻.png) |
-
-| ⑤ Agent 修改复刻 | ⑥ 多轮完成修改 | ⑦ 导出为压缩包 | ⑧ 实物展示 |
-|:---:|:---:|:---:|:---:|
-| ![Agent修改复刻](doc/agent修改复刻.png) | ![多轮完成修改](doc/多轮完成修改.png) | ![导出为压缩包](doc/导出为压缩包.png) | ![实物展示](doc/实物展示.png) |
-
-### Agent 模式
-
-| 询问 | 生成 |
+| Workbench | Settings → Plugins |
 |:---:|:---:|
-| ![Agent模式询问](doc/Agent模式询问.png) | ![Agent模式生成](doc/Agent模式生成.png) |
+| ![video workbench](docs/images/视频工作台.png) | ![settings plugins](docs/images/设置-插件.png) |
 
-### GIF 生成
+### UI design mode (image slicing + web reproduction)
 
-| 生成 | 微调 |
-|:---:|:---:|
-| ![GIF生成](doc/GIF生成.png) | ![GIF微调](doc/GIF微调.png) |
+Starting from one UI mockup: AI auto-slices it → you adjust in the slice editor → a multi-turn agent reproduces the page → export the full design package.
 
-### 无限画布
-
-| 预览 | 编辑 |
-|:---:|:---:|
-| ![无限画布预览](doc/无限画布预览.png) | ![无限画布编辑](doc/无限画布编辑.png) |
-
-### 其他功能
-
-| 反推提示词 | 提示词广场 | 我的素材 | 设置 |
+| ① Source mockup | ② Import and slice | ③ Auto-slice + manual fixes | ④ Start web reproduction |
 |:---:|:---:|:---:|:---:|
-| ![反推提示词](doc/反推提示词.png) | ![提示词广场](doc/提示词广场.png) | ![我的素材](doc/我的素材.png) | ![设置](doc/设置.png) |
+| ![source](docs/images/待复刻原图.png) | ![import](docs/images/导入并开始拆图.png) | ![adjust](docs/images/完成自动拆图并手动调整或拆图.png) | ![reproduce](docs/images/开始生成网页复刻.png) |
+
+| ⑤ Agent edits the copy | ⑥ Multi-turn refinement | ⑦ Export as ZIP | ⑧ Final result |
+|:---:|:---:|:---:|:---:|
+| ![agent edit](docs/images/agent修改复刻.png) | ![multi-turn](docs/images/多轮完成修改.png) | ![export](docs/images/导出为压缩包.png) | ![result](docs/images/实物展示.png) |
+
+### Agent mode
+
+| Ask | Generate |
+|:---:|:---:|
+| ![ask](docs/images/Agent模式询问.png) | ![generate](docs/images/Agent模式生成.png) |
+
+### GIF generation
+
+| Generate | Fine-tune |
+|:---:|:---:|
+| ![generate](docs/images/GIF生成.png) | ![fine-tune](docs/images/GIF微调.png) |
+
+### Infinite canvas
+
+| Preview | Edit |
+|:---:|:---:|
+| ![preview](docs/images/无限画布预览.png) | ![edit](docs/images/无限画布编辑.png) |
+
+### Other features
+
+| Reverse prompt | Prompt gallery | My assets | Settings |
+|:---:|:---:|:---:|:---:|
+| ![reverse prompt](docs/images/反推提示词.png) | ![gallery](docs/images/提示词广场.png) | ![assets](docs/images/我的素材.png) | ![settings](docs/images/设置.png) |
 
 ---
 
-## ✨ 功能特性
+## ✨ Features
 
-### 六大工作模式
+### Seven working modes
 
-| 模式 | 入口 | 简介 |
+| Mode | Entry point | Summary |
 | --- | --- | --- |
-| 🎨 文本生图 | `TextToImageForm` | 纯文字提示词生成图像，支持多图并行 |
-| 🖼️ 图生图 | `ImageToImageForm` | 上传参考图，编辑/转换/风格化 |
-| 🤖 Agent 智能体 | `AgentChatWorkspace` | 多轮对话式生成：聊天 → 方案 → 出图，支持 vision 描述、联网搜索、reasoning、本机浏览器 CDP（打开/读取页面；淘宝商品页可提炼标题 SKU 主图） |
-| ✂️ UI设计模式 | `SliceWorkspace` | UI 图 → 切图资产 → 网页复刻（仅宽屏可用，详见下节） |
-| 🔍 反推提示词 | `ReversePromptForm` | 上传图片流式反推提示词（支持所有已配置的文字模型） |
-| 🎬 动图生成 | `GifGenerationWorkspace` | 多帧生图 + 网格拼合，浏览器端编码 GIF（`gifenc`） |
-### UI设计模式（图片切图 + 网页复刻）
+| 🎨 Text to image | `TextToImageForm` | Generate from a text prompt, multiple images in parallel |
+| 🖼️ Image to image | `ImageToImageForm` | Upload references to edit / convert / restyle |
+| 🤖 Agent | `AgentChatWorkspace` | Conversational generation: chat → plan → images, with vision descriptions, web search, reasoning, and local browser CDP (open/read pages; Taobao product pages can extract title/SKU/main images) |
+| ✂️ UI design mode | `SliceWorkspace` | UI mockup → slice assets → web reproduction (wide screens only, see below) |
+| 🔍 Reverse prompt | `ReversePromptForm` | Upload an image and stream back a prompt (any configured text model) |
+| 🎬 GIF generation | `GifGenerationWorkspace` | Multi-frame generation + grid assembly, GIF encoded in-browser (`gifenc`) |
+| 🎥 Video workbench | `PluginWorkbench` | Powered by **video plugins**; the host ships no upstream protocol (see below) |
 
-把一张平面 UI 图拆解成可复用的切图资产，并进一步复刻为可预览的网页。**仅宽屏模式可用**，窄屏显示切换提示。
+### Video workbench (plugin-based)
 
-- **AI 拆图**：视觉模型识别切片与背景候选，结果先在确认弹窗里逐条勾选再落库；JSON 解析失败会自动发起一次无图修复重试
-- **切图编辑器**：画布缩放/平移、拖拽创建、框选多选、8 向缩放、四角圆角、吸附对齐、右键菜单、完整撤销重做（50 步）与快捷键
-- **三种查看模式**：原图（源图 + 轮廓）／挖洞（抠图后效果，本地生成不消耗额度）／仅切图（棋盘底）
-- **四种资产处理**：算法透明、AI 透明、算法 SVG 矢量化（`imagetracerjs`）、AI 重绘 SVG。四者各自独立可还原，互不覆盖；算法类支持批量，AI 类只能逐个触发（避免一次点击连续扣费）
-- **背景补齐**：在背景确认弹窗里调整蓝框（背景范围）与红框（移除区域），调用带蒙版的图片编辑补齐被前景遮挡的背景；产出「局部合成」与「AI 原图」两个结果供选择
-- **网页复刻**：多轮 AI agent 对话，产物是固定三文件（`index.html` / `styles.css` / `script.js`）+ 只读 `assets/`。agent 通过 `read_file` / `edit_file` 按行编辑，iframe 实时预览，上下文用量以 API 回报的 `input_tokens` 为准（140K 提醒 / 175K 拒绝）
-- **导出**：切图包 ZIP（PNG + 可选 SVG + manifest）或完整设计包（含源图、工作区元数据与 `web/` 网页文件），并支持从导出包还原工作区
-- **数据**：工作区与图片存于 IndexedDB（`nova-slice-db`），纳入一键备份/恢复范围
+Video generation contains no upstream-specific protocol. The host provides the tab, task queue, history, media upload and form rendering; "who to call, what to send, how to poll, where the result is, what the form looks like" all live in the plugin pack.
 
-> ⚠️ 「AI 补齐」（画笔蒙版局部重绘）暂未包含在本版本中。其请求管线与背景补齐共用且工作正常，
-> 待编辑器组件的一处渲染时序缺陷修复后再开放。
+- **Installation**: an admin drops the plugin directory into `backend/plugins/`, then restarts the backend (or clicks "Reload" in Settings)
+- **Plugins are pure JSON**: three files (`manifest.json` / `ui.schema.json` / `provider.json`), no executable code
+- **Egress must be declared**: any host outside `permissions.hosts`, plus every private/loopback address, is refused
+- **Credentials belong to the user**: apiKey / baseUrl are entered under Settings → Plugins, stored in the browser, never in the database
+- **The settings page is read-only**: it lists what is installed and why a pack failed to load; installing and removing plugins requires server access
+- **Reference implementation**: `backend/plugins/ccode-h3/` (MiniMax H3 — 8 models, first/last frame, reference image/video/audio, upscaled tiers)
+- **Result URLs pass through untouched**: no domain rewriting, the video link is exactly what the upstream returned
 
-> 图片编辑相关能力（AI 透明化、背景补齐）需要一个 **OpenAI 协议**的图片模型：它们依赖带 `mask` 的 `/v1/images/edits`，Gemini 与 Grok 协议没有该语义，因此不会出现在切图页的模型选择器里。
+📦 **Official plugin collection: [nova-studio-plugins](https://github.com/tianjiangqiji/nova-studio-plugins)**
+— includes a minimal plugin template and can be cloned straight into `backend/plugins/`:
 
-### 提示词广场
+```bash
+cd backend/plugins && git clone https://github.com/tianjiangqiji/nova-studio-plugins.git .
+```
 
-`PROMPT_GALLERY_MODE` 三种工作方式：
+👉 **Writing your own plugin (or having an AI write it): [docs/plugins/](docs/plugins/)**
+(paste [docs/plugins/LLM.md](docs/plugins/LLM.md) into your AI verbatim)
 
-- `1` 常驻：Tab 始终显示
-- `2` 私密：需要密码验证（密码来自后端环境变量 `PROMPT_GALLERY_PASSWORD`）
-- `3` 关闭：完全不显示
+### UI design mode (image slicing + web reproduction)
 
-提示词内容由后端 `backend/prompts.json` 维护，支持敏感词过滤（`backend/blacklist.json`）。
+Break a flat UI mockup into reusable slice assets, then reproduce it as a previewable web page. **Wide-screen only** — narrow screens show a hint to switch.
 
-### 模型系统
+- **AI slicing**: a vision model proposes slices and background candidates; you tick them off in a confirmation dialog before anything is stored. A JSON parse failure triggers one automatic image-free repair retry
+- **Slice editor**: zoom/pan, drag-to-create, rubber-band multi-select, 8-way resize, per-corner radius, snapping, context menu, full undo/redo (50 steps) and keyboard shortcuts
+- **Three view modes**: original (source + outlines) / knockout (post-cutout result, generated locally at no cost) / slices only (checkerboard)
+- **Four asset operations**: algorithmic transparency, AI transparency, algorithmic SVG vectorization (`imagetracerjs`), AI SVG redraw. All four are independently revertible and never overwrite each other; algorithmic ones support batches, AI ones fire one at a time (so a single click can't rack up charges)
+- **Background fill**: adjust the blue box (background extent) and red box (removal region) in the confirmation dialog, then call masked image editing to fill in what the foreground covered; produces both a "local composite" and an "AI original" for you to choose from
+- **Web reproduction**: a multi-turn AI agent producing exactly three files (`index.html` / `styles.css` / `script.js`) plus a read-only `assets/`. The agent edits by line via `read_file` / `edit_file`, previews live in an iframe, and context usage is taken from the API's reported `input_tokens` (warn at 140K, refuse at 175K)
+- **Export**: slice package ZIP (PNG + optional SVG + manifest) or a full design package (source image, workspace metadata and the `web/` files), and workspaces can be restored from an export
+- **Storage**: workspaces and images live in IndexedDB (`nova-slice-db`) and are covered by one-click backup/restore
 
-Nova Image 采用**用户自定义模型**架构：
+> ⚠️ "AI fill" (brush-mask inpainting) is not in this release. Its request pipeline is shared with background fill and works, but a render-ordering defect in the editor component needs fixing first.
 
-- **模型级配置**：每个图片模型和文本模型都独立保存协议、显示名称、模型 ID、API Key 与 Base URL
-- **图像模型**：用户自由添加、编辑、删除，支持设置协议、显示名称、模型 ID、最大参考图数量、最大分辨率
-- **Image 2 额外参数**：仅 OpenAI 图片模型显示，透明背景、质量、风格控件默认开启，用户可手动关闭
-- **文字模型**：支持自定义扩展，兼容 Gemini 和 OpenAI Response
-- **默认模型**：可为文本生图、图生图、反推提示词、Agent、AI 拆图、网页复刻、切图图片编辑等任务分别设置默认模型
-- **多协议文本模型**：OpenAI Responses / OpenAI Chat Completions / Anthropic Messages / Google Gemini 四种协议，均支持多轮工具调用（UI设计模式的网页复刻 agent 依赖此能力），统一经 `/api/nova/proxy/text` 转发
+> Image-editing features (AI transparency, background fill) need an **OpenAI-protocol** image model: they rely on `/v1/images/edits` with a `mask`, which the Gemini and Grok protocols have no equivalent for, so those models don't appear in the slice page's model picker.
 
-### 任务系统
+### Prompt gallery
 
-- 提交后入队，服务端并发处理（默认上限 50，可通过 `NOVA_TASK_CONCURRENCY` 调整）
-- 浏览器通过 **WebSocket** 实时接收任务/队列状态，断线自动重连，失败 5 次后回退 **HTTP 轮询**（30 秒间隔）
-- 任务结果本地落盘（默认 `backend/data/nova-images/`，可用 `NOVA_IMAGE_DIR` 调整），HTTP 路由 `/api/nova/images/:taskId/:index` 直接提供
-- 任务 TTL 12 小时（可通过 `NOVA_TASK_TTL_HOURS` 调整），过期自动清理（5 分钟一次）
-- 服务重启时把残留"处理中"任务标记为失败并删除产物，避免幽灵任务
+`PROMPT_GALLERY_MODE` has three settings:
 
-### 体验与工程化
+- `1` always on: the tab is always visible
+- `2` private: password required (from the backend env var `PROMPT_GALLERY_PASSWORD`)
+- `3` off: hidden entirely
 
-- PWA（`next-pwa`），可安装到桌面
-- 三端兼容 UI：桌面端、平板端、移动端自适应布局，提供一致的用户体验
-- 暗色 / 亮色主题切换
-- 宽屏 / 窄屏自适应布局（左侧垂直 Tab + 右侧内容）
-- 历史任务持久化（IndexedDB / localStorage）
-- 一键备份 / 恢复（`JSZip` 打包 localStorage + IndexedDB，支持跳过不兼容旧配置并恢复其余数据）
-- 历史图片懒加载（`@tanstack/react-virtual`）
-- 随机图、Toast 通知、确认对话框
+Content is maintained in `backend/prompts.json`, with profanity filtering via `backend/blacklist.json`.
+
+### Model system
+
+Nova Studio is built around **user-defined models**:
+
+- **Per-model configuration**: every image and text model stores its own protocol, display name, model ID, API key and base URL
+- **Image models**: add, edit and delete freely; set protocol, display name, model ID, max reference images and max resolution
+- **Image 2 extra parameters**: shown for OpenAI image models only — transparent background, quality and style controls are on by default and can be turned off
+- **Text models**: freely extensible, compatible with Gemini and OpenAI Responses
+- **Default models**: set a separate default for text-to-image, image-to-image, reverse prompt, Agent, AI slicing, web reproduction and slice image editing
+- **Four text protocols**: OpenAI Responses / OpenAI Chat Completions / Anthropic Messages / Google Gemini, all with multi-turn tool calling (the web-reproduction agent depends on it), all forwarded through `/api/nova/proxy/text`
+
+### Task system
+
+- Submissions are queued and processed concurrently server-side (default cap 50, tune with `NOVA_TASK_CONCURRENCY`)
+- The browser receives task/queue updates over **WebSocket**, reconnects automatically, and falls back to **HTTP polling** (30s interval) after 5 failures
+- Results are written to disk (default `backend/data/nova-images/`, configurable via `NOVA_IMAGE_DIR`) and served directly at `/api/nova/images/:taskId/:index`
+- Tasks have a 12-hour TTL (`NOVA_TASK_TTL_HOURS`), cleaned up automatically every 5 minutes
+- On restart, leftover "processing" tasks are marked failed and their artifacts deleted, so no ghost tasks linger
+
+### Experience & engineering
+
+- PWA (`next-pwa`), installable to the desktop
+- Adaptive UI across desktop, tablet and mobile
+- Dark / light theme toggle
+- Wide / narrow adaptive layout (vertical tabs on the left, content on the right)
+- Persistent task history (IndexedDB / localStorage)
+- One-click backup / restore (`JSZip` over localStorage + IndexedDB; incompatible legacy config is skipped and the rest still restores)
+- Lazy-loaded history images (`@tanstack/react-virtual`)
+- Random wallpapers, toasts, confirmation dialogs
 
 ---
 
-## 📁 项目结构
+## 📁 Project layout
 
 ```text
 nova-image-studio/
-├── frontend/                 # Next.js 前端（React 19 + TS）
+├── frontend/                 # Next.js frontend (React 19 + TS)
 │   ├── src/
-│   │   ├── app/              # 根页面 layout.tsx / page.tsx
-│   │   ├── components/       # 业务组件 + shadcn/ui 基础组件
-│   │   │   ├── workspace/    # 主工作台壳、Tab、Header、结果区
-│   │   │   ├── agent/        # Agent 模式相关组件
-│   │   │   ├── slice/        # UI设计模式：切图编辑器、资产面板、网页复刻
-│   │   │   └── ui/           # shadcn 风格 UI 基础件
+│   │   ├── app/              # root layout.tsx / page.tsx
+│   │   ├── components/       # feature components + shadcn/ui primitives
+│   │   │   ├── workspace/    # main shell, tabs, header, results pane
+│   │   │   ├── agent/        # Agent mode
+│   │   │   ├── plugin/       # video plugin host: schema form, media slots, history, progress
+│   │   │   ├── settings/     # settings sections (plugin list and credentials)
+│   │   │   ├── slice/        # UI design mode: slice editor, asset panel, web reproduction
+│   │   │   └── ui/           # shadcn-style primitives
 │   │   ├── hooks/            # useQueueStatus / useAgentChat / useGifWorkflow / ...
-│   │   ├── lib/              # 客户端工具、API 客户端、WebSocket、备份
-│   │   │   ├── slice-*.ts    # 切图几何/裁剪/矢量化/导出/AI 客户端
-│   │   │   └── web-agent/    # 网页复刻 agent：虚拟文件系统、工具、主循环
-│   │   └── test/             # vitest 配置与用例
-│   ├── public/               # PWA 图标、静态资源
-│   ├── next.config.ts        # 静态导出 + next-pwa 配置
+│   │   ├── lib/              # client utils, API clients, WebSocket, backup
+│   │   │   ├── plugin-*.ts   # plugin schema solver, task client, history, upload
+│   │   │   ├── slice-*.ts    # slice geometry/crop/vectorize/export/AI clients
+│   │   │   └── web-agent/    # web reproduction agent: virtual FS, tools, main loop
+│   │   └── test/             # vitest config and cases
+│   ├── public/               # PWA icons, static assets
+│   ├── next.config.ts        # static export + next-pwa config
 │   ├── package.json
 │   └── vitest.config.ts
 ├── backend/
-│   ├── server.js             # Node 服务（HTTP + WS + SQLite + 任务队列）
-│   ├── cdp.js                # 浏览器 CDP 网络工具（连接本机 Chrome 调试端口）
-│   ├── taobao-extract.js     # 淘宝/天猫商品页信息提取（页面内注入脚本）
-│   ├── prompts.json          # 提示词广场内容
-│   ├── blacklist.json        # 敏感词
+│   ├── server.js             # Node service (HTTP + WS + SQLite + task queue)
+│   ├── cdp.js                # browser CDP tools (connect to local Chrome debug port)
+│   ├── taobao-extract.js     # Taobao/Tmall product-page extractor
+│   ├── plugin-runtime/       # video plugin runtime: registry, validation, templates, executor, media, verify CLI
+│   ├── plugins/              # installed video plugins (placed by an admin)
+│   │   └── ccode-h3/         # reference implementation: MiniMax H3
+│   ├── prompts.json          # prompt gallery content
+│   ├── blacklist.json        # blocked words
 │   ├── .env.example
 │   └── package.json
-├── desktop/                  # Electron 桌面壳（Windows / macOS 打包）
+├── desktop/                  # Electron desktop shell (Windows / macOS)
+├── docs/
+│   ├── images/               # README screenshots
+│   └── plugins/              # video plugin docs (including LLM.md for AI consumption)
 ├── scripts/
-│   ├── pack.js               # 打包：build + 汇总到 out.zip
-│   └── generate-icons.js     # 生成 PWA 图标
-├── package.json              # npm workspaces 根
-├── LICENSE                   # AGPL-3.0 许可证
+│   ├── pack.js               # packaging: build + collect into out.zip
+│   └── generate-icons.js     # generate PWA icons
+├── package.json              # npm workspaces root
+├── LICENSE                   # AGPL-3.0
 └── README.md
 ```
 
-> 生产构建会输出到 `frontend/out/`，由后端 `server.js` 静态托管。
+> Production builds land in `frontend/out/` and are served statically by `server.js`.
 
 ---
 
-## 🖥️ 桌面版（Windows / macOS）
+## 🖥️ Desktop (Windows / macOS)
 
-桌面版把前端、后端和 Electron 壳打包成单一安装包，双击即用，无需自行安装 Node.js 与配置环境。
+The desktop build packs frontend, backend and the Electron shell into a single installer. No separate Node.js setup is required.
 
-- **下载安装**：从 Releases 页面下载对应平台的安装包（macOS 为 `.dmg` / `.zip`，Windows 为 `.exe`）。
+- **Install**: download the platform package from Releases (macOS `.dmg` / `.zip`, Windows `.exe`).
 
-  > ⚠️ 安装包未配置代码签名证书：macOS 首次打开需在 Finder 中**右键 →「打开」**；Windows 安装/运行时会出现 **SmartScreen** 提示，选择「仍要运行」即可。
+  > ⚠️ Packages are unsigned: on macOS first-open via Finder **right-click → Open**; on Windows choose **Run anyway** at SmartScreen.
 
-- **源码构建**：
+- **Build from source**:
 
   ```bash
-  npm install                 # 安装根依赖（electron / electron-builder）
-  npm run install:all         # 安装 frontend 与 backend 依赖
-  npm run electron:dist:win   # 构建 Windows 安装包
-  npm run electron:dist:mac   # 构建 macOS 安装包
+  npm install                 # root deps (electron / electron-builder)
+  npm run install:all         # frontend + backend deps
+  npm run electron:dist:win   # Windows installer
+  npm run electron:dist:mac   # macOS package
   ```
 
-  产物输出到根目录 `release/`。
+  Artifacts land in `release/`.
 
-- **数据存储**：数据库与生成的图片保存在系统 userData 目录（Windows 的 `%APPDATA%`、macOS 的 `~/Library/Application Support` 下），卸载/重装安装包不影响数据。
-- **桌面版独享能力**：一键启动调试浏览器、浏览器 CDP 网络工具（详见下节）。
-
----
-
-## 🌐 浏览器 CDP
-
-通过 Chrome DevTools Protocol 连接本机调试端口（默认 9222，可在 Agent 里改成 9224）。Agent 打开「浏览器」开关后可以：打开/列出标签页、读任意网页正文；若当前页是淘宝/天猫商品页，再用 `browser_read_taobao` 提炼标题、价格、店铺、SKU、主图和详情图链接。
-
-日常 Chrome 默认不允许给默认用户目录加 `--remote-debugging-port`。可以自己用独立 `user-data-dir` 启动，或让 Agent 自动拉起专用调试浏览器（独立配置，需重新登录）。
-
-CDP 只连 `127.0.0.1`，只读你打开的标签页。
+- **Data**: SQLite and generated images live in the OS userData directory. Reinstalling the app does not wipe them.
+- **Desktop-only**: one-click debug browser launch and browser CDP tools (see below).
 
 ---
 
-## 🚀 部署指南
+## 🌐 Browser CDP
+
+Chrome DevTools Protocol talks to a local debug port (default 9222; Agent can switch to 9224). With the Agent "browser" switch on, it can open/list tabs and read page text. For Taobao/Tmall product pages, `browser_read_taobao` extracts title, price, shop, SKU, main images and detail images.
+
+CDP only binds `127.0.0.1` and only reads tabs you opened.
+
+---
+
+## 🚀 Deployment
 
 <details>
-<summary><strong>🐳 Docker Compose 部署</strong></summary>
+<summary><strong>🐳 Docker Compose</strong></summary>
 
-### 前置要求
+### Requirements
 
 - Docker 20.10+
 - Docker Compose v2
 
-### 快速启动
+### Quick start
 
 ```bash
-# 0. clone 仓库
+# 0. clone the repo
 git clone https://github.com/tianjiangqiji/nova-image-studio.git
 cd nova-image-studio
 
-# 1. 复制 Docker 专用环境变量到项目根目录（挂载为 /app/.env）
+# 1. copy the Docker env template to the project root (mounted as /app/.env)
 cp backend/.env.docker.example .env
-# 按需编辑 .env（限流、广场密码等）
+# edit .env as needed (rate limits, gallery password, ...)
 
-# 2. 复制配置文件到根目录（compose 会挂到容器内）
+# 2. copy the config files to the root (compose mounts them into the container)
 cp backend/blacklist.json blacklist.json
 cp backend/prompts.json prompts.json
-# 若仓库里没有这两份文件：touch blacklist.json prompts.json 后自行填写
+# if the repo has neither: touch blacklist.json prompts.json and fill them in
 
-# 3. 创建数据目录
+# 3. create the data and plugins directories
 mkdir -p data
+mkdir -p plugins
+# copy the built-in plugin to the host (the mount shadows the in-image plugins dir;
+# skip this and the built-in plugin disappears)
+cp -r backend/plugins/ccode-h3 plugins/
 
-# 4. 启动服务
+# 4. start
 docker compose up -d
 
-# 运行期最少需要：
-# docker-compose.yml、.env、blacklist.json、prompts.json、data/
+# At runtime you need only:
+# docker-compose.yml, .env, blacklist.json, prompts.json, data/, plugins/
 ```
 
-访问 <http://localhost:3000>。
+Open <http://localhost:3000>.
 
-### 环境变量
+### Environment variables
 
-通过根目录 `.env` 挂载到容器 `/app/.env` 注入（代码用 `process.cwd()/.env` 读取），无需修改镜像。
+Injected by mounting the root `.env` at `/app/.env` (the code reads `process.cwd()/.env`), so the image never needs rebuilding.
 
-修改后：
+After editing:
 
-- 限流 / 队列 / 广场模式等运行时配置：约 1 秒内自动生效
-- `PORT` / `HOSTNAME` / `NODE_ENV` / 数据路径：需重启
+- Runtime config (rate limits, queue, gallery mode, …) takes effect within about a second
+- `PORT` / `HOSTNAME` / `NODE_ENV` / data paths require a restart
 
 ```bash
 docker compose restart
 ```
 
-### 升级
-
-拉取最新镜像并重建容器：
+### Upgrading
 
 ```bash
 docker compose down
@@ -287,45 +346,48 @@ docker compose pull
 docker compose up -d --force-recreate
 ```
 
-### 数据持久化
+### Persistence
 
-`docker-compose.yml` 会挂载：
+`docker-compose.yml` mounts:
 
-| 宿主机 | 容器内 | 用途 |
+| Host | Container | Purpose |
 | --- | --- | --- |
-| `./data` | `/app/backend/data` | 数据库 + 图片（含 WAL/SHM） |
-| `./.env` | `/app/.env` | 环境变量 |
-| `./blacklist.json` | `/app/backend/blacklist.json` | 敏感词 |
-| `./prompts.json` | `/app/backend/prompts.json` | 提示词广场 |
+| `./data` | `/app/backend/data` | database + images (including WAL/SHM) |
+| `./.env` | `/app/.env` | environment variables |
+| `./blacklist.json` | `/app/backend/blacklist.json` | blocked words |
+| `./prompts.json` | `/app/backend/prompts.json` | prompt gallery |
+| `./plugins` | `/app/backend/plugins` | video plugins (shadows the in-image dir; edit plugins without rebuilding the image) |
 
-`./data` 内实际文件（由 `NOVA_*` 路径决定）：
+Plugins are loaded once at process startup; after adding/removing/editing plugins in the host `./plugins/`, restart the container, or hit `/api/nova/plugins?reload=1` to rescan without a restart.
 
-- `nova-tasks.sqlite`（及 `-wal` / `-shm`）— 任务数据库
-- `nova-images/` — 生成的图片
+What actually ends up in `./data` (determined by the `NOVA_*` paths):
+
+- `nova-tasks.sqlite` (plus `-wal` / `-shm`) — task database
+- `nova-images/` — generated images
 
 </details>
 
 <details>
-<summary><strong>📦 本地部署（生产环境）</strong></summary>
+<summary><strong>📦 Bare-metal deployment (production)</strong></summary>
 
-### 环境要求
+### Requirements
 
-- **Node.js**：20 或 22
-- **npm**：自带 workspaces 支持
-- `better-sqlite3` 是原生依赖，**生产服务器必须本地 `npm ci --omit=dev`**，不要直接复制本机 `node_modules`
+- **Node.js** 20 or 22
+- **npm** (workspaces support is built in)
+- `better-sqlite3` is a native dependency — the production server **must** run `npm ci --omit=dev` locally; do not copy `node_modules` from your dev machine
 
-### 部署步骤
+### Steps
 
-#### 1. 在构建机
+#### 1. On the build machine
 
 ```bash
 npm ci
 npm run build
 ```
 
-产物 `frontend/out/` 已生成。
+This produces `frontend/out/`.
 
-#### 2. 上传以下到生产服务器
+#### 2. Upload to the production server
 
 ```text
 frontend/out/
@@ -334,10 +396,10 @@ backend/package.json
 backend/package-lock.json
 backend/prompts.json
 backend/blacklist.json
-backend/.env          # 按生产环境调整（cwd=backend）
+backend/.env          # adjusted for production (cwd=backend)
 ```
 
-`backend/.env` 建议：
+Recommended `backend/.env`:
 
 ```env
 NODE_ENV=production
@@ -345,100 +407,99 @@ NOVA_TASK_DB=./data/nova-tasks.sqlite
 NOVA_IMAGE_DIR=./data/nova-images
 ```
 
-#### 3. 在生产服务器
+#### 3. On the production server
 
-在项目根目录执行（`npm start` 会 `cd backend` 再启动）：
+Run from the project root (`npm start` does `cd backend` for you):
 
 ```bash
-cd backend && npm ci --omit=dev   # 必须本地装 better-sqlite3 原生模块
+cd backend && npm ci --omit=dev   # better-sqlite3 must be built locally
 cd ..
-npm start                         # 等价于 cd backend && node server.js
+npm start                         # equivalent to cd backend && node server.js
 ```
 
-服务会在 `backend/data/` 下自动创建数据库与图片目录。
+The service creates the database and image directories under `backend/data/` on first run.
 
-#### 4. 进程托管
+#### 4. Process supervision
 
-推荐 **PM2 / systemd / 平台自带进程管理**，确保：
+Use **PM2 / systemd / your platform's process manager**, making sure that:
 
-- 进程工作目录最终在 `backend/`（与 `npm start` 一致），或绝对路径配置 `NOVA_TASK_DB` / `NOVA_IMAGE_DIR`
-- 进程对 `backend/data/`（或你配置的路径）有读写权限
-- 反向代理（Nginx / Caddy / 云网关）将域名转到 `http://127.0.0.1:3000`
+- The working directory ends up at `backend/` (matching `npm start`), or configure `NOVA_TASK_DB` / `NOVA_IMAGE_DIR` with absolute paths
+- The process can read and write `backend/data/` (or wherever you pointed it)
+- Your reverse proxy (Nginx / Caddy / cloud gateway) forwards the domain to `http://127.0.0.1:3000`
 
-#### 5. 一键打包
+#### 5. One-shot packaging
 
 ```bash
 npm run go
 ```
 
-生成根目录 `out.zip`，解压后即可按上面 1~3 步骤部署。
+Produces `out.zip` in the root; unzip it and follow steps 1–3 above.
 
 </details>
 
 <details>
-<summary><strong>💻 本地开发</strong></summary>
+<summary><strong>💻 Local development</strong></summary>
 
-### 环境要求
+### Requirements
 
-- **Node.js**：20 或 22
-- **npm**：自带 workspaces 支持
+- **Node.js** 20 or 22
+- **npm** (workspaces support is built in)
 
-### 安装与运行
+### Install and run
 
 ```bash
-# 1. 克隆仓库
+# 1. clone
 git clone https://github.com/tianjiangqiji/nova-image-studio.git
 cd nova-image-studio
 
-# 2. 安装依赖（自动安装根、frontend、backend）
+# 2. install (root, frontend and backend together)
 npm install
 
-# 3. 复制后端环境变量（本地 cwd=backend，使用相对路径 ./data/...）
+# 3. copy the backend env file (locally cwd=backend, so paths are ./data/...)
 cp backend/.env.example backend/.env
 # Windows: Copy-Item backend/.env.example backend/.env
-# 确认 backend/.env 中：
+# check that backend/.env has:
 #   NOVA_TASK_DB=./data/nova-tasks.sqlite
 #   NOVA_IMAGE_DIR=./data/nova-images
 
-# 4. 启动开发模式（等同于 build 后用 production 模式跑 server.js）
+# 4. start dev mode (builds, then runs server.js in production mode)
 npm run dev
 ```
 
-访问 <http://localhost:3000>。
+Open <http://localhost:3000>. Local data lands in `backend/data/` (database + `nova-images/`).
 
-本地数据落在 `backend/data/`（数据库 + `nova-images/`）。
+> On first launch you need to configure at least one image model and one text model in Settings, and pick defaults. All client configuration is stored in the browser's localStorage and can be exported via the backup feature.
 
-> 首次启动时需要在 UI 的"设置"中至少完成一个图片模型和一个文本模型配置，并设置默认模型。所有前端配置均保存在浏览器 localStorage，可通过备份功能导出。
-
-### 常用开发脚本
+### Common scripts
 
 ```bash
-npm run dev:frontend   # 仅启动 Next.js dev server（HMR，不走静态导出）
-npm run dev:backend    # 仅启动后端 server.js
-npm run build          # 构建前端静态产物到 frontend/out/
-npm start              # 直接跑后端 server.js
-npm run lint           # 前端 ESLint
-npm test               # 前端 Vitest watch
-npm run test:run       # 前端 Vitest 单次
-npm run go             # 打包：build + 汇总到根 out.zip
+npm run dev:frontend   # Next.js dev server only (HMR, no static export)
+npm run dev:backend    # backend server.js only
+npm run build          # build the frontend into frontend/out/
+npm start              # run the backend directly
+npm run lint           # frontend ESLint
+npm test               # frontend Vitest (watch)
+npm run test:run       # frontend Vitest (single run)
+npm run go             # package: build + collect into out.zip
+```
+
+Backend-side checks:
+
+```bash
+cd backend
+npm test                  # backend unit tests (includes plugin runtime)
+npm run plugins:verify    # validate installed plugins + run their fixtures
 ```
 
 </details>
 
 <details>
-<summary><strong>🔨 Docker 镜像构建</strong></summary>
-
-### 构建镜像
+<summary><strong>🔨 Building the Docker image</strong></summary>
 
 ```bash
 docker build -t nova-image-studio:latest .
-```
 
-### 推送到仓库
-
-```bash
 docker tag nova-image-studio:latest tianjiangqiji/nova-image-studio:latest
-
 docker push tianjiangqiji/nova-image-studio:latest
 ```
 
@@ -446,142 +507,157 @@ docker push tianjiangqiji/nova-image-studio:latest
 
 ---
 
-## ⚙️ 环境变量
+## ⚙️ Environment variables
 
-| 场景 | 模板 | 复制到 | 数据路径（模板已写好） |
+| Scenario | Template | Copy to | Data paths (already set in the template) |
 | --- | --- | --- | --- |
-| 本地开发 / 本地生产 | `backend/.env.example` | `backend/.env` | `./data/nova-tasks.sqlite`、`./data/nova-images` |
-| Docker Compose | `backend/.env.docker.example` | 项目根 `.env` | `backend/data/nova-tasks.sqlite`、`backend/data/nova-images` |
+| Local dev / bare-metal production | `backend/.env.example` | `backend/.env` | `./data/nova-tasks.sqlite`, `./data/nova-images` |
+| Docker Compose | `backend/.env.docker.example` | root `.env` | `backend/data/nova-tasks.sqlite`, `backend/data/nova-images` |
 
-| 变量 | 必填 | 默认 | 说明 |
+| Variable | Required | Default | Description |
 | --- | --- | --- | --- |
-| `PORT` | 否 | `3000` | 监听端口 |
-| `HOSTNAME` | 否 | `0.0.0.0` | 绑定地址，`localhost`/`127.0.0.1` 仅本机 |
-| `NODE_ENV` | **是** | `production` | **必须为 `production`**，否则会走 Next dev 模式 |
-| `NOVA_TASK_DB` | 否 | `./nova-tasks.sqlite` | SQLite 文件路径（相对 `process.cwd()`）；建议 `./data/...` 或 Docker 下 `backend/data/...` |
-| `NOVA_IMAGE_DIR` | 否 | `./nova-images`（相对 `__dirname` 即 `backend/`） | 任务产物落盘目录；建议 `./data/nova-images` 或 Docker 下 `backend/data/nova-images` |
-| `NOVA_TASK_CONCURRENCY` | 否 | `50` | 最大并发任务数（绝对上限 50） |
-| `NOVA_TASK_TTL_HOURS` | 否 | `12` | 任务清理时间（小时），超过该时间后任务和图片将被删除 |
-| `NOVA_MAX_QUEUE_SIZE` | 否 | `200` | 全局最大待处理任务数 |
-| `NOVA_RATE_LIMIT_WINDOW_MS` | 否 | `60000` | 创建任务速率限制窗口，单位毫秒 |
-| `NOVA_RATE_LIMIT_MAX_REQUESTS_PER_IP` | 否 | `20` | 单 IP 在一个窗口内最多创建多少个任务 |
-| `NOVA_RATE_LIMIT_MAX_REQUESTS_PER_API_KEY` | 否 | `20` | 单 API Key 在一个窗口内最多创建多少个任务 |
-| `NOVA_MAX_PENDING_TASKS_PER_IP` | 否 | `20` | 单 IP 最多同时拥有多少个待处理任务 |
-| `NOVA_MAX_PENDING_TASKS_PER_API_KEY` | 否 | `10` | 单 API Key 最多同时拥有多少个待处理任务 |
-| `NOVA_RATE_LIMIT_RETRY_AFTER_SECONDS` | 否 | `30` | 队列满/限流时响应头 `Retry-After` 秒数 |
-| `PROMPT_GALLERY_MODE` | 否 | `2` | `1` 常驻 / `2` 私密密码（点七下标题） / `3` 关闭 |
-| `PROMPT_GALLERY_PASSWORD` | 否 | 空 | 提示词广场私密模式密码；为空时私密模式可直接开启 |
-| `NOVA_CDP_ENABLED` | 否 | `true` | 浏览器 CDP 总开关；`false` 时所有 `/api/nova/cdp/*` 返回 404（重启生效） |
-| `NOVA_CDP_HOST` | 否 | `127.0.0.1` | 本机 Chrome 调试端口地址（热生效） |
-| `NOVA_CDP_PORT` | 否 | `9222` | 本机 Chrome 调试端口默认值（热生效；也可在 Agent 里改） |
-| `NOVA_CDP_TIMEOUT_MS` | 否 | `20000` | CDP 请求超时，单位毫秒（热生效） |
-| `NOVA_CDP_LAUNCH_ENABLED` | 否 | `true` | 允许从应用内一键启动调试浏览器（热生效，仅本地/桌面场景有意义） |
-| `NOVA_CDP_EVAL_ENABLED` | 否 | `false` | 允许 `/api/nova/cdp/evaluate` 在页面内执行任意 JS（热生效，风险较高，默认关闭） |
-| `NOVA_CDP_DIR` | 否 | 图片目录同级 `cdp-products` | 商品素材落盘目录（重启生效） |
-| `NOVA_CHROME_PATH` | 否 | 空 | 覆盖浏览器可执行文件路径，默认自动探测（重启生效） |
+| `PORT` | no | `3000` | Listen port |
+| `HOSTNAME` | no | `0.0.0.0` | Bind address; `localhost`/`127.0.0.1` means local-only |
+| `NODE_ENV` | **yes** | `production` | **Must be `production`**, otherwise Next dev mode kicks in |
+| `NOVA_TASK_DB` | no | `./nova-tasks.sqlite` | SQLite path (relative to `process.cwd()`); prefer `./data/...`, or `backend/data/...` under Docker |
+| `NOVA_IMAGE_DIR` | no | `./nova-images` (relative to `__dirname`, i.e. `backend/`) | Where task artifacts are written; prefer `./data/nova-images`, or `backend/data/nova-images` under Docker |
+| `NOVA_TASK_CONCURRENCY` | no | `50` | Max concurrent tasks (hard ceiling 50) |
+| `NOVA_TASK_TTL_HOURS` | no | `12` | Task lifetime in hours; tasks and images are deleted after this |
+| `NOVA_MAX_QUEUE_SIZE` | no | `200` | Global cap on pending tasks |
+| `NOVA_RATE_LIMIT_WINDOW_MS` | no | `60000` | Rate-limit window for task creation, in ms |
+| `NOVA_RATE_LIMIT_MAX_REQUESTS_PER_IP` | no | `20` | Max tasks one IP may create per window |
+| `NOVA_RATE_LIMIT_MAX_REQUESTS_PER_API_KEY` | no | `20` | Max tasks one API key may create per window |
+| `NOVA_MAX_PENDING_TASKS_PER_IP` | no | `20` | Max simultaneous pending tasks per IP |
+| `NOVA_MAX_PENDING_TASKS_PER_API_KEY` | no | `10` | Max simultaneous pending tasks per API key |
+| `NOVA_RATE_LIMIT_RETRY_AFTER_SECONDS` | no | `30` | `Retry-After` seconds when the queue is full or rate-limited |
+| `PROMPT_GALLERY_MODE` | no | `2` | `1` always on / `2` private password (tap the title 7×) / `3` off |
+| `PROMPT_GALLERY_PASSWORD` | no | empty | Password for private mode; empty means private mode opens directly |
+| `NOVA_PLUGINS_DIR` | no | `backend/plugins` | Video plugin directory (where an admin drops plugins) |
+| `NOVA_PLUGIN_MEDIA_DIR` | no | `backend/data/plugin-media` | Where uploaded reference media is stored |
+| `NOVA_PLUGIN_MEDIA_TTL_MS` | no | `86400000` | How long orphaned media (not bound to a task) is kept, in ms |
+| `NOVA_MEDIA_MAX_IMAGE_BYTES` | no | `10485760` | Per-file limit for reference images |
+| `NOVA_MEDIA_MAX_VIDEO_BYTES` | no | `52428800` | Per-file limit for reference videos |
+| `NOVA_MEDIA_MAX_AUDIO_BYTES` | no | `15728640` | Per-file limit for reference audio |
+| `NOVA_PUBLIC_BASE_URL` | situational | inferred from proxy headers | This service's public address. Upstreams fetch reference media anonymously, so **an internal-only deployment must set this explicitly** |
+| `NOVA_CDP_ENABLED` | no | `false` | Browser CDP master switch; `false` makes `/api/nova/cdp/*` return 404 (restart) |
+| `NOVA_CDP_HOST` | no | `127.0.0.1` | Local Chrome debug host (hot) |
+| `NOVA_CDP_PORT` | no | `9222` | Local Chrome debug port (hot; Agent can change it) |
+| `NOVA_CDP_TIMEOUT_MS` | no | `20000` | CDP request timeout in ms (hot) |
+| `NOVA_CDP_LAUNCH_ENABLED` | no | `true` | Allow launching a debug browser from the app (hot; desktop/local) |
+| `NOVA_CDP_EVAL_ENABLED` | no | `false` | Allow `/api/nova/cdp/evaluate` to run arbitrary JS (hot; off by default) |
+| `NOVA_CDP_DIR` | no | sibling `cdp-products` | Product-asset dump directory (restart) |
+| `NOVA_CHROME_PATH` | no | empty | Override Chrome executable path (restart) |
 
-> `.env` 修改后大部分运行时配置**实时生效**（任务并发、限流、队列容量、接单开关、广场模式），无需重启；`PORT`、`HOSTNAME`、`NODE_ENV`、`NOVA_TASK_DB`、`NOVA_IMAGE_DIR` 这类启动级配置仍需重启。
+> Most runtime settings take effect **immediately** after editing `.env` (concurrency, rate limits, queue size, accepting-new-tasks switch, gallery mode, media size limits). Startup-level settings — `PORT`, `HOSTNAME`, `NODE_ENV`, `NOVA_TASK_DB`, `NOVA_IMAGE_DIR`, `NOVA_PLUGINS_DIR` — still need a restart.
 
 ---
 
-## 📡 API 速览
+## 📡 API at a glance
 
-后端暴露在 `/api/nova/*` 路径下，前端在同源调用。
+The backend lives under `/api/nova/*`; the frontend calls it same-origin.
 
-| 方法 | 路径 | 说明 |
+| Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/api/nova/tasks` | 创建任务，返回 `{ taskId }`（202） |
-| `GET` | `/api/nova/tasks/:id` | 查询任务状态与结果 |
-| `POST` | `/api/nova/tasks/:id/ack` | 续期：把 TTL 延长 2 分钟 |
-| `GET` | `/api/nova/queue-status` | 当前并发 / 排队 / 接收状态 |
-| `GET` | `/api/nova/prompts` | 提示词广场内容 |
-| `GET` | `/api/nova/blacklist` | 敏感词列表 |
-| `GET` | `/api/nova/config` | 前端配置（如 `promptGalleryMode`） |
-| `GET` | `/api/nova/images/:taskId/:index` | 任务产物图片 |
-| `WS` | `/api/nova/ws` | 实时任务 / 队列订阅 |
-| `GET` | `/api/nova/cdp/status` | 调试浏览器连接状态，含当前 host/port（本地/桌面场景） |
-| `GET` | `/api/nova/cdp/config` | 读取当前 CDP 端口配置（本地/桌面场景） |
-| `POST` | `/api/nova/cdp/config` | 热更新 CDP 端口（写入运行时配置，本地/桌面场景） |
-| `GET` | `/api/nova/cdp/targets` | 列出调试浏览器中的 page 标签页（本地/桌面场景） |
-| `POST` | `/api/nova/cdp/open` | 在调试浏览器中打开新标签页并访问指定 URL（本地/桌面场景） |
-| `POST` | `/api/nova/cdp/read-page` | 读取指定标签页的正文文本（去脚本/样式，本地/桌面场景） |
-| `POST` | `/api/nova/cdp/extract` | 提取指定标签页的淘宝/天猫商品信息（本地/桌面场景） |
-| `POST` | `/api/nova/cdp/fetch-image` | 下载商品图（单张或 ≤30 张批量）到本地素材库（本地/桌面场景） |
-| `POST` | `/api/nova/cdp/screenshot` | 对指定标签页截图并落盘（本地/桌面场景） |
-| `POST` | `/api/nova/cdp/launch` | 一键启动调试浏览器（本地/桌面场景，`NOVA_CDP_LAUNCH_ENABLED` 控制） |
-| `POST` | `/api/nova/cdp/evaluate` | 在页面内执行任意 JS（本地/桌面场景，默认关闭） |
-| `GET` | `/api/nova/cdp/products/:file` | 已落盘商品素材静态服务（本地/桌面场景） |
+| `POST` | `/api/nova/tasks` | Create a task, returns `{ taskId }` (202) |
+| `GET` | `/api/nova/tasks/:id` | Task status and result |
+| `POST` | `/api/nova/tasks/:id/ack` | Renew: extend the TTL by 2 minutes |
+| `GET` | `/api/nova/queue-status` | Current concurrency / queue / accepting state |
+| `GET` | `/api/nova/prompts` | Prompt gallery content |
+| `GET` | `/api/nova/blacklist` | Blocked-word list |
+| `GET` | `/api/nova/config` | Frontend config (e.g. `promptGalleryMode`) |
+| `GET` | `/api/nova/images/:taskId/:index` | Task artifact image |
+| `GET` | `/api/nova/plugins` | Installed video plugins (`?reload=1` rescans the directory) |
+| `POST` | `/api/nova/plugin-tasks` | Create a video plugin task, returns `{ taskId }` (202) |
+| `GET` | `/api/nova/plugin-tasks/:id` | Plugin task (local status + upstream status + progress + artifacts) |
+| `POST` | `/api/nova/plugin-tasks/:id/ack` | Renew: extend the TTL by 2 minutes |
+| `POST` | `/api/nova/plugin-media?pluginId=&kind=` | Upload reference media, returns a public URL |
+| `GET` | `/api/nova/plugin-media/:file` | Read back reference media (anonymous, for upstreams to fetch) |
+| `WS` | `/api/nova/ws` | Live task / queue subscription |
+| `GET` | `/api/nova/cdp/status` | Debug-browser connection status (desktop/local) |
+| `GET`/`POST` | `/api/nova/cdp/config` | Read / hot-update CDP port (desktop/local) |
+| `GET` | `/api/nova/cdp/targets` | List page tabs in the debug browser |
+| `POST` | `/api/nova/cdp/open` | Open a URL in a new debug tab |
+| `POST` | `/api/nova/cdp/read-page` | Read page text with scripts/styles stripped |
+| `POST` | `/api/nova/cdp/extract` | Extract Taobao/Tmall product info from a tab |
+| `POST` | `/api/nova/cdp/fetch-image` | Download product images into the local library |
+| `POST` | `/api/nova/cdp/screenshot` | Screenshot a tab |
+| `POST` | `/api/nova/cdp/launch` | Launch a debug browser (`NOVA_CDP_LAUNCH_ENABLED`) |
+| `POST` | `/api/nova/cdp/evaluate` | Run JS in-page (off by default) |
+| `GET` | `/api/nova/cdp/products/:file` | Serve dumped product assets |
 
-### 任务状态
+### Task states
 
-- `排队中`：等待调度
-- `processing`：正在调用上游 API
-- `completed`：成功，`result.images` 包含产物链接
-- `failed`：失败，详见 `error`
-- `expired`：超过 TTL
+- `排队中` (queued): waiting to be scheduled
+- `processing`: calling the upstream API
+- `completed`: success — `result.images` holds the artifact links
+- `failed`: see `error`
+- `expired`: past its TTL
 
 ---
 
-## ❓ 常见问题
+## ❓ FAQ
 
-**为什么生产环境不用 `next start`？**
-项目使用 `output: 'export'`，构建产物是纯静态 `out/`。`server.js` 同时托管静态文件 + 任务 API，不再依赖 `next start`。
+**Why not `next start` in production?**
+The project uses `output: 'export'`, so the build is a plain static `out/`. `server.js` serves those static files *and* the task API, so `next start` isn't needed.
 
-**只部署 `out/` 能用吗？**
-UI 可以打开，但任务提交、Agent、历史同步全部依赖 `/api/nova/*`，必须运行 `server.js`。
+**Can I deploy only `out/`?**
+The UI will open, but task submission, Agent and history sync all depend on `/api/nova/*` — you must run `server.js`.
 
-**数据库需要单独备份吗？**
-首次部署不需要，服务启动会自建。任务数据要保留就备份数据目录（本地 `backend/data/`，Docker 宿主机 `./data/`）里的 `nova-tasks.sqlite`（含 WAL/SHM）以及 `nova-images/`。重启后残留任务会被自动标记为失败并清理产物。
+**Do I need to back up the database separately?**
+Not for a first deployment; the service creates it. To keep task data, back up `nova-tasks.sqlite` (with WAL/SHM) and `nova-images/` from your data directory (`backend/data/` locally, `./data/` on the Docker host). Leftover tasks are marked failed and their artifacts cleaned on restart.
 
-**如何临时停止接收新任务（不停服务）？**
-编辑 `.env`：
+**How do I stop accepting new tasks without stopping the service?**
+Edit `.env`:
 
 ```env
 NOVA_ACCEPT_NEW_TASKS=false
 ```
 
-保存即生效。等待在飞任务完成后即可重启升级。再次开启设为 `true` 或留空。
+It takes effect on save. Wait for in-flight tasks to finish, then restart to upgrade. Set it back to `true` (or leave it empty) to resume.
 
-**任务多久会过期？**
-默认创建后 12 小时（可通过 `NOVA_TASK_TTL_HOURS` 配置修改）；前端在拿到结果后会调用 `/ack` 续期 2 分钟，给下载留时间。超过 TTL 服务端删除数据库记录与产物图片。
-
----
-
-## 🙏 致谢
-
-本项目的无限画布工作区功能基于 [infinite-canvas](https://github.com/basketikun/infinite-canvas) 项目开发，感谢原作者 [basketikun](https://github.com/basketikun) 的开源贡献。
-
-本项目的 UI设计模式（图片切图）功能参考 [image-to-slice](https://github.com/50kg/image-to-slice) 项目实现，感谢原作者 [50kg](https://github.com/50kg) 的开源贡献。原项目是 Figma 插件，本项目移植了其中与 Figma 无关的核心切图流程，并重写了 UI、模型配置与数据存储。
-
-切图的本地 SVG 矢量化基于 [imagetracerjs](https://github.com/jankovicsandras/imagetracerjs)。
-
-感谢 [Linux.do](https://linux.do/) 社区的支持。
+**When do tasks expire?**
+12 hours after creation by default (`NOVA_TASK_TTL_HOURS`). Once the frontend has a result it calls `/ack` for a 2-minute extension so there's time to download. Past the TTL the server deletes the database row and the artifact images.
 
 ---
 
-## ☕ 赞助支持
+## 🙏 Acknowledgements
+
+The infinite canvas workspace is built on [infinite-canvas](https://github.com/basketikun/infinite-canvas) — thanks to [basketikun](https://github.com/basketikun) for open-sourcing it.
+
+The UI design mode (image slicing) draws on [image-to-slice](https://github.com/50kg/image-to-slice) — thanks to [50kg](https://github.com/50kg). The original is a Figma plugin; this project ported the Figma-independent slicing core and rewrote the UI, model configuration and storage.
+
+Local SVG vectorization uses [imagetracerjs](https://github.com/jankovicsandras/imagetracerjs).
+
+Thanks to the [Linux.do](https://linux.do/) community for their support.
+
+---
+
+## ☕ Sponsorship
+
 <div align="center">
 
-如果这个项目对你有帮助，欢迎通过爱发电赞助支持，你的每一份鼓励都是持续更新的动力！
+If this project helps you, sponsoring on Afdian keeps it moving — every bit of encouragement counts.
 
 <br>
 <br>
 
 <a href="https://www.ifdian.net/a/skyjee">
-  <img src="https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E8%B5%9E%E5%8A%A9%E4%BD%9C%E8%80%85-946ce6?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyMS4zNWwtMS40NS0xLjMyQzUuNCAxNS4zNiAyIDEyLjI4IDIgOC41IDIgNS40MiA0LjQyIDMgNy41IDNjMS43NCAwIDMuNDEuODEgNC41IDIuMDlDMTMuMDkgMy44MSAxNC43NiAzIDE2LjUgMyAxOS41OCAzIDIyIDUuNDIgMjIgOC41YzAgMy43OC0zLjQgNi44Ni04LjU1IDExLjU0TDEyIDIxLjM1eiIvPjwvc3ZnPg==&logoColor=white" alt="爱发电赞助" />
+  <img src="https://img.shields.io/badge/%E7%88%B1%E5%8F%91%E7%94%B5-%E8%B5%9E%E5%8A%A9%E4%BD%9C%E8%80%85-946ce6?style=for-the-badge&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyMS4zNWwtMS40NS0xLjMyQzUuNCAxNS4zNiAyIDEyLjI4IDIgOC41IDIgNS40MiA0LjQyIDMgNy41IDNjMS43NCAwIDMuNDEuODEgNC41IDIuMDlDMTMuMDkgMy44MSAxNC43NiAzIDE2LjUgMyAxOS41OCAzIDIyIDUuNDIgMjIgOC41YzAgMy43OC0zLjQgNi44Ni04LjU1IDExLjU0TDEyIDIxLjM1eiIvPjwvc3ZnPg==&logoColor=white" alt="Sponsor on Afdian" />
 </a>
 
 <br>
 <br>
 
 </div>
----
-
-## 📬 联系方式
-
-邮箱：skyjee@linux.do
 
 ---
+
+## 📬 Contact
+
+Email: skyjee@linux.do
+
+---
+
 ## Star History
 
 <a href="https://www.star-history.com/?repos=tianjiangqiji%2Fnova-image-studio&type=date&legend=top-left">
@@ -594,23 +670,31 @@ NOVA_ACCEPT_NEW_TASKS=false
 
 ---
 
-## 📄 许可证
+## 📄 License
 
-本项目采用 [GNU Affero General Public License v3.0](LICENSE)（AGPL-3.0）开源许可证。
+Licensed under the [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). In short:
 
-这意味着：
+- ✅ You may use, modify and distribute this software freely
+- ✅ You may use it commercially
+- ⚠️ If you modify it and offer it as a network service, you must publish your modified source
+- ⚠️ Derivative works must use the same AGPL-3.0 license
 
-- ✅ 你可以自由使用、修改和分发本软件
-- ✅ 你可以将本软件用于商业用途
-- ⚠️ 如果你修改了本软件并通过网络提供服务，你必须公开修改后的源代码
-- ⚠️ 基于本软件的衍生作品必须使用相同的 AGPL-3.0 许可证
-
-详细条款请参阅 [LICENSE](LICENSE) 文件。
+See [LICENSE](LICENSE) for the full terms.
 
 ---
 
 <div align="center">
 
-**[⬆ 回到顶部](#nova-image-studio)**
+**[⬆ Back to top](#nova-studio)**
 
 </div>
+
+
+
+
+
+
+
+
+
+

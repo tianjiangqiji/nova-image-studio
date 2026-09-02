@@ -1,0 +1,91 @@
+{
+  "apiVersion": 1,
+  "submit": {
+    "method": "POST",
+    "url": "{{baseUrl}}/v1/videos",
+    "timeoutMs": 90000,
+    "headers": {
+      "Content-Type": "application/json",
+      "Authorization": "Bearer {{apiKey}}"
+    },
+    "body": {
+      "model": "{{model}}",
+      "prompt": "{{fields.prompt}}",
+      "seconds": "{{string fields.seconds}}",
+      "aspect_ratio": "{{fields.aspectRatio}}",
+      "size": {
+        "$switch": "{{facet.resolution}}",
+        "$cases": { "2K": "2K", "4K": "4K" }
+      },
+      "workflow_id": {
+        "$switch": "{{fields.mode}}",
+        "$cases": { "first-last-frame": "fl2v" }
+      },
+      "images": {
+        "$switch": "{{fields.mode}}",
+        "$cases": {
+          "first-last-frame": "{{concat media.firstFrame media.lastFrame}}",
+          "multi-reference": "{{media.multiImage}}"
+        }
+      },
+      "reference_videos": "{{media.multiVideo}}",
+      "reference_audios": "{{media.multiAudio}}"
+    },
+    "extract": {
+      "taskId": ["id", "task_id", "data.id"]
+    },
+    "error": {
+      "from": ["error.message", "error", "message", "msg", "detail"]
+    }
+  },
+  "poll": {
+    "method": "GET",
+    "url": "{{baseUrl}}/v1/videos/{{upstreamTaskId}}",
+    "timeoutMs": 15000,
+    "intervalMs": 12000,
+    "maxTotalMs": 1800000,
+    "headers": {
+      "Authorization": "Bearer {{apiKey}}"
+    },
+    "status": {
+      "from": ["status", "state"],
+      "completed": ["completed", "success", "succeeded", "done"],
+      "failed": ["failed", "fail", "error"],
+      "queued": ["queued", "pending", "queueing", "preparing", "waiting"],
+      "processing": ["processing", "in_progress", "running", "generating"]
+    },
+    "progress": {
+      "from": ["progress"],
+      "scale": "0-100"
+    },
+    "result": {
+      "assets": [
+        {
+          "kind": "video",
+          "mime": "video/mp4",
+          "url": [
+            "video_url",
+            "url",
+            "download_url",
+            "output.url",
+            "output.video_url",
+            "output",
+            "result.url",
+            "result.video_url",
+            "result",
+            "data.0.url",
+            "data.0.video_url",
+            "data.0"
+          ],
+          "posterUrl": ["cover_url", "cover_image_url", "thumbnail_url"],
+          "durationSec": ["duration", "seconds"],
+          "fallbackUrl": "{{baseUrl}}/v1/videos/{{upstreamTaskId}}/content"
+        }
+      ]
+    },
+    "error": {
+      "from": ["error.message", "error", "message", "msg", "detail"]
+    },
+    "fatalHttpStatus": [400, 401, 403]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "facets": { "tier": "comic", "resolution": "768P" },
+  "fields": {
+    "mode": "first-last-frame",
+    "aspectRatio": "1:1",
+    "seconds": 6,
+    "prompt": "从白天过渡到夜晚"
+  },
+  "media": {
+    "firstFrame": ["https://host.test/api/nova/plugin-media/first.png"],
+    "lastFrame": ["https://host.test/api/nova/plugin-media/last.png"],
+    "multiVideo": ["https://host.test/api/nova/plugin-media/should-be-ignored.mp4"]
+  }
+}

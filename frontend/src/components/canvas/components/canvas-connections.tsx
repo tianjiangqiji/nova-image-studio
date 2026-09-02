@@ -51,6 +51,7 @@ export function ConnectionPath({
       />
       <path
         d={pathD}
+        className="transition-[stroke,stroke-width,stroke-opacity] duration-150 ease-out"
         stroke={active || routeActive ? theme.node.activeStroke : theme.node.muted}
         strokeWidth={active || routeActive ? 3 : 2}
         strokeOpacity={active || routeActive ? 1 : 0.82}

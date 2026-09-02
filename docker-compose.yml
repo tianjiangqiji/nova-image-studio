@@ -13,4 +13,5 @@ services:
       - ./blacklist.json:/app/backend/blacklist.json
       - ./prompts.json:/app/backend/prompts.json
       - ./.env:/app/.env
+      - ./plugins:/app/backend/plugins
     restart: unless-stopped

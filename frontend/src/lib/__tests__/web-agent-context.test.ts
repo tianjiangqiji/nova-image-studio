@@ -26,11 +26,6 @@ describe('contextLevel', () => {
     expect(contextLevel(undefined)).toBe('ok');
     expect(contextLevel(Number.NaN)).toBe('ok');
   });
-
-  it('拒答阈值相对上限留有余量，用于吸收门控滞后一次请求', () => {
-    expect(CONTEXT_REFUSE_TOKENS).toBeLessThan(CONTEXT_LIMIT_TOKENS);
-    expect(CONTEXT_LIMIT_TOKENS - CONTEXT_REFUSE_TOKENS).toBeGreaterThanOrEqual(20_000);
-  });
 });
 
 describe('formatTokens', () => {

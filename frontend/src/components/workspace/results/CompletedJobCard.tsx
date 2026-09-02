@@ -1,7 +1,7 @@
 'use client';
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, Check, Copy, Download, ImagePlus, Maximize, RefreshCw, RotateCcw, Thermometer, X } from 'lucide-react';
+import { AlertCircle, Check, Clipboard, Copy, Download, ImagePlus, Maximize, RefreshCw, RotateCcw, Thermometer, X } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -238,7 +238,16 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
 
   return (
     <>
-      <div className="rounded-xl border border-border bg-card p-4">
+      <div className="group relative rounded-xl border border-border bg-card p-4">
+        {/* 删除按钮：悬浮在卡片右上角外侧，hover 变红 */}
+        <button
+          type="button"
+          onClick={() => setDeleteDialogOpen(true)}
+          title="移除"
+          className="absolute -right-2 -top-2 z-20 flex size-6 items-center justify-center rounded-full border border-border bg-card text-muted-foreground opacity-0 shadow-sm transition-all hover:border-destructive hover:bg-destructive hover:text-white group-hover:opacity-100"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
         <div className="flex items-center gap-3">
           <div
             ref={lazyLoad.elementRef}
@@ -330,119 +339,132 @@ export const CompletedJobCard = memo(function CompletedJobCard({ job, onClear, o
               </div>
             )}
 
-            <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-              {getModelDisplayName(job.model)}
-              <span>·</span>
-              {outputSizeLabel}
-              {job.aspect_ratio !== '1:1' && job.aspect_ratio !== 'auto' && <><span>·</span><span>{job.aspect_ratio}</span></>}
-              {supportsTemperature && <><span>·</span><Thermometer className="w-3 h-3" /><span>{job.temperature?.toFixed(2) ?? 1}</span></>}
-              {isMultiple && <><span>·</span><span className="font-medium text-primary">x{sourceImages.length}{job.parallelCount && job.parallelCount > sourceImages.length ? `/${job.parallelCount}` : ''}</span></>}
-            </p>
+            {/* 元信息：第一行 模型ID + 温度 + 数量；第二行 分辨率 + 比例 */}
+            <div className="mt-0.5 flex flex-col gap-0.5 text-xs text-muted-foreground">
+              <div className="flex items-center gap-1.5">
+                <span className="shrink-0">{getModelDisplayName(job.model)}</span>
+                {supportsTemperature && (
+                  <span className="flex shrink-0 items-center gap-0.5">
+                    <Thermometer className="w-3 h-3" />
+                    {job.temperature?.toFixed(2) ?? 1}
+                  </span>
+                )}
+                {isMultiple && (
+                  <span className="shrink-0 font-medium text-primary">
+                    x{sourceImages.length}{job.parallelCount && job.parallelCount > sourceImages.length ? `/${job.parallelCount}` : ''}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                <span>{outputSizeLabel}</span>
+                {job.aspect_ratio !== '1:1' && job.aspect_ratio !== 'auto' && <><span>·</span><span>{job.aspect_ratio}</span></>}
+              </div>
+            </div>
           </div>
 
-          <div className="flex flex-shrink-0 items-center gap-1">
-            {needsRedownload && onRetryDownload && (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => void handleRetryDownload()}
-                disabled={retryingDownload || isDownloadingImages}
-                title={isDownloadingImages ? '正在取回图片' : '重新下载到本地缓存'}
-                className="text-warning hover:text-warning/80"
-              >
-                <RefreshCw className={`w-4 h-4 ${retryingDownload || isDownloadingImages ? 'animate-spin' : ''}`} />
-              </Button>
-            )}
+          {/* 工具按钮双行布局 */}
+          <div className="flex flex-shrink-0 flex-col items-center gap-1">
+            <div className="flex items-center gap-1">
+              {needsRedownload && onRetryDownload && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => void handleRetryDownload()}
+                  disabled={retryingDownload || isDownloadingImages}
+                  title={isDownloadingImages ? '正在取回图片' : '重新下载到本地缓存'}
+                  className="text-warning hover:text-warning/80"
+                >
+                  <RefreshCw className={`w-4 h-4 ${retryingDownload || isDownloadingImages ? 'animate-spin' : ''}`} />
+                </Button>
+              )}
 
-            {isMultiple ? (
-              <DropdownMenu open={assetMenuOpen} onOpenChange={setAssetMenuOpen}>
-                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="添加到素材库">
+              {isMultiple ? (
+                <DropdownMenu open={assetMenuOpen} onOpenChange={setAssetMenuOpen}>
+                  <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="添加到素材库">
+                    <ImagePlus className="w-4 h-4" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {sourceImages.map((_, index) => (
+                      <DropdownMenuItem key={index} onClick={() => {
+                        addImageToAssets(index);
+                        setAssetMenuOpen(false);
+                      }}>
+                        保存图片 {index + 1}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuItem onClick={addAllToAssets} className="font-medium text-primary">
+                      <ImagePlus className="mr-1.5 w-3.5 h-3.5" />
+                      保存全部
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => addImageToAssets(0)}
+                  title="添加到素材库"
+                >
                   <ImagePlus className="w-4 h-4" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {sourceImages.map((_, index) => (
-                    <DropdownMenuItem key={index} onClick={() => {
-                      addImageToAssets(index);
-                      setAssetMenuOpen(false);
-                    }}>
-                      保存图片 {index + 1}
+                </Button>
+              )}
+
+              {isMultiple ? (
+                <DropdownMenu open={downloadMenuOpen} onOpenChange={setDownloadMenuOpen}>
+                  <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="下载">
+                    <Download className="w-4 h-4" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {sourceImages.map((_, index) => (
+                      <DropdownMenuItem key={index} onClick={() => {
+                        downloadImage(index);
+                        setDownloadMenuOpen(false);
+                      }}>
+                        下载图片 {index + 1}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuItem onClick={downloadAll} className="font-medium text-primary">
+                      <Download className="mr-1.5 w-3.5 h-3.5" />
+                      下载全部
                     </DropdownMenuItem>
-                  ))}
-                  <DropdownMenuItem onClick={addAllToAssets} className="font-medium text-primary">
-                    <ImagePlus className="mr-1.5 w-3.5 h-3.5" />
-                    保存全部
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <Button variant="ghost" size="icon-sm" onClick={() => downloadImage(0)} title="下载">
+                  <Download className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-1">
+              {isMultiple ? (
+                <DropdownMenu open={copyMenuOpen} onOpenChange={setCopyMenuOpen}>
+                  <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="复制图片">
+                    {imgCopied ? <Check className="w-4 h-4 text-success" /> : <Clipboard className="w-4 h-4" />}
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {sourceImages.map((_, index) => (
+                      <DropdownMenuItem key={index} onClick={() => copyImage(index)}>
+                        复制图片 {index + 1}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              ) : (
+                <Button variant="ghost" size="icon-sm" onClick={() => copyImage(0)} title="复制图片">
+                  {imgCopied ? <Check className="w-4 h-4 text-success" /> : <Clipboard className="w-4 h-4" />}
+                </Button>
+              )}
+
               <Button
                 variant="ghost"
                 size="icon-sm"
-                onClick={() => addImageToAssets(0)}
-                title="添加到素材库"
+                onClick={() => onRetry(job)}
+                title="重试"
               >
-                <ImagePlus className="w-4 h-4" />
+                <RotateCcw className="w-4 h-4" />
               </Button>
-            )}
-
-            {isMultiple ? (
-              <DropdownMenu open={downloadMenuOpen} onOpenChange={setDownloadMenuOpen}>
-                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="下载">
-                  <Download className="w-4 h-4" />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {sourceImages.map((_, index) => (
-                    <DropdownMenuItem key={index} onClick={() => {
-                      downloadImage(index);
-                      setDownloadMenuOpen(false);
-                    }}>
-                      下载图片 {index + 1}
-                    </DropdownMenuItem>
-                  ))}
-                  <DropdownMenuItem onClick={downloadAll} className="font-medium text-primary">
-                    <Download className="mr-1.5 w-3.5 h-3.5" />
-                    下载全部
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              <Button variant="ghost" size="icon-sm" onClick={() => downloadImage(0)} title="下载">
-                <Download className="w-4 h-4" />
-              </Button>
-            )}
-
-            {isMultiple ? (
-              <DropdownMenu open={copyMenuOpen} onOpenChange={setCopyMenuOpen}>
-                <DropdownMenuTrigger className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })} title="复制图片">
-                  {imgCopied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {sourceImages.map((_, index) => (
-                    <DropdownMenuItem key={index} onClick={() => copyImage(index)}>
-                      复制图片 {index + 1}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              <Button variant="ghost" size="icon-sm" onClick={() => copyImage(0)} title="复制图片">
-                {imgCopied ? <Check className="w-4 h-4 text-success" /> : <Copy className="w-4 h-4" />}
-              </Button>
-            )}
-
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => onRetry(job)}
-              title="重试"
-              className="text-muted-foreground hover:text-primary"
-            >
-              <RotateCcw className="w-4 h-4" />
-            </Button>
-
-            <Button variant="ghost" size="icon-sm" onClick={() => setDeleteDialogOpen(true)} title="移除">
-              <X className="w-4 h-4" />
-            </Button>
+            </div>
           </div>
         </div>
       </div>

@@ -186,7 +186,7 @@ test('Gemini imageConfig defaults auto values and preserves an explicit aspect r
     return response.ok;
   });
 
-  async function createGeminiTask(outputSize, aspectRatio) {
+  async function createGeminiTask(outputSize, aspectRatio, prompt = '淘宝主图3:4') {
     const response = await fetch(`${backendUrl}/api/nova/tasks`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -195,7 +195,7 @@ test('Gemini imageConfig defaults auto values and preserves an explicit aspect r
         baseUrl: `http://127.0.0.1:${upstreamPort}`,
         protocol: 'google',
         mode: 'text-to-image',
-        prompt: '淘宝主图3:4',
+        prompt,
         model: 'gemini-3.1-flash-image-preview',
         parallelCount: 1,
         outputSize,
@@ -213,7 +213,7 @@ test('Gemini imageConfig defaults auto values and preserves an explicit aspect r
     assert.equal(task.status, 'completed', backendOutput);
   }
 
-  await createGeminiTask('auto', 'auto');
+  await createGeminiTask('auto', 'auto', '普通提示词');
   await createGeminiTask('1K', '3:4');
   await createGeminiTask('1K', '');
   await createGeminiTask('weird', '9:16-invalid');
@@ -231,11 +231,11 @@ test('Gemini imageConfig defaults auto values and preserves an explicit aspect r
   });
   assert.deepEqual(upstreamRequests[2].generationConfig.imageConfig, {
     imageSize: '1K',
-    aspectRatio: '1:1',
+    aspectRatio: '3:4',
   });
   assert.deepEqual(upstreamRequests[3].generationConfig.imageConfig, {
     imageSize: '1K',
-    aspectRatio: '1:1',
+    aspectRatio: '3:4',
   });
   assert.deepEqual(upstreamRequests[4].generationConfig.imageConfig, {
     imageSize: '1K',

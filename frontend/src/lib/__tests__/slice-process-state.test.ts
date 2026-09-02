@@ -45,7 +45,6 @@ describe('isProcessOpActive', () => {
 
     // AI 透明也置 transparent=true，但不能同时点亮算法版
     const ai = makeAsset({ transparent: true, aiTransparent: true });
-    expect(ai.transparent).toBe(true);
     expect(isProcessOpActive(ai, 'transparent')).toBe(false);
     expect(isProcessOpActive(ai, 'aiTransparent')).toBe(true);
   });

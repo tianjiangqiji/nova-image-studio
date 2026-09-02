@@ -1,6 +1,6 @@
 // nova-slice-db IndexedDB 封装
 // 维护图片切图的工作区（workspaces）与图片二进制（blobs）两个对象存储。
-// 创建逻辑与 backup-utils.ts 中 openDatabase 的 nova-slice-db 分支保持一致，
+// 创建逻辑与 backup-utils.ts 中 KNOWN_STORE_DEFS 的 nova-slice-db 定义保持一致，
 // 以便备份/恢复流程能正确识别库结构。
 
 import { nanoid } from 'nanoid';
@@ -27,7 +27,7 @@ let dbPromise: Promise<IDBDatabase> | null = null;
  * 打开/创建 nova-slice-db 数据库。
  * - workspaces store: keyPath 'id'
  * - blobs store: keyPath 'key'
- * 与 backup-utils.ts 中 openDatabase 的创建逻辑一致。
+ * 与 backup-utils.ts 中 KNOWN_STORE_DEFS 的 nova-slice-db 定义保持一致。
  */
 export function openSliceDb(): Promise<IDBDatabase> {
   if (typeof indexedDB === 'undefined') {

@@ -27,21 +27,35 @@ const DB_NAME = 'nova-upload-cache';
 const DB_VERSION = 1;
 const STORE_NAME = 'images';
 
+// 单例缓存数据库连接（参考 image-db.ts 的模式），避免每次读写 open 后泄漏连接。
+let uploadCacheDbPromise: Promise<IDBDatabase | null> | null = null;
+
 function openDB(): Promise<IDBDatabase | null> {
     if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+    if (uploadCacheDbPromise) return uploadCacheDbPromise;
 
-    return new Promise((resolve) => {
+    uploadCacheDbPromise = new Promise((resolve) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-        request.onerror = () => resolve(null);
+        request.onerror = () => { uploadCacheDbPromise = null; resolve(null); };
+        request.onsuccess = () => {
+            const db = request.result;
+            // 另一个 tab 或备份导入触发版本变更时主动关闭并失效缓存，下次调用会重新打开。
+            db.onversionchange = () => {
+                try { db.close(); } catch { /* ignore */ }
+                uploadCacheDbPromise = null;
+            };
+            db.onclose = () => { uploadCacheDbPromise = null; };
+            resolve(db);
+        };
         request.onupgradeneeded = () => {
             const db = request.result;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 db.createObjectStore(STORE_NAME, { keyPath: 'key' });
             }
         };
-        request.onsuccess = () => resolve(request.result);
     });
+    return uploadCacheDbPromise;
 }
 
 async function getCachedImage(key: string): Promise<CachedUploadImage | null> {

@@ -1,0 +1,10 @@
+{
+  "facets": { "tier": "standard", "resolution": "768P" },
+  "fields": {
+    "mode": "multi-reference",
+    "aspectRatio": "9:16",
+    "seconds": 4,
+    "prompt": "上游只给状态不给地址"
+  },
+  "media": {}
+}

@@ -29,13 +29,26 @@ const DB_NAME = 'nova-reverse-db';
 const DB_VERSION = 1;
 const STORE_NAME = 'reverse-results';
 
+// 单例缓存数据库连接（参考 image-db.ts 的模式），避免每次读写 open 后泄漏连接。
+let reverseDbPromise: Promise<IDBDatabase | null> | null = null;
+
 function openReverseDB(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  if (reverseDbPromise) return reverseDbPromise;
 
-  return new Promise((resolve) => {
+  reverseDbPromise = new Promise((resolve) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onerror = () => resolve(null);
-    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => { reverseDbPromise = null; resolve(null); };
+    req.onsuccess = () => {
+      const db = req.result;
+      // 另一个 tab 或备份导入触发版本变更时主动关闭并失效缓存，下次调用会重新打开。
+      db.onversionchange = () => {
+        try { db.close(); } catch { /* ignore */ }
+        reverseDbPromise = null;
+      };
+      db.onclose = () => { reverseDbPromise = null; };
+      resolve(db);
+    };
     req.onupgradeneeded = (e) => {
       const db = (e.target as IDBOpenDBRequest).result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
@@ -43,6 +56,7 @@ function openReverseDB(): Promise<IDBDatabase | null> {
       }
     };
   });
+  return reverseDbPromise;
 }
 
 /** 从 IndexedDB 加载 current / previous 两条记录 */

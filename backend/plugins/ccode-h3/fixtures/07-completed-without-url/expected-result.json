@@ -1,0 +1,11 @@
+{
+  "state": "completed",
+  "progress": 100,
+  "assets": [
+    {
+      "kind": "video",
+      "url": "https://upstream.test/v1/videos/up-0007/content",
+      "mime": "video/mp4"
+    }
+  ]
+}

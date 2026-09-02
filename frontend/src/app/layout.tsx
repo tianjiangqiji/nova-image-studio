@@ -6,8 +6,8 @@ import { ServiceWorkerManager } from "@/components/ServiceWorkerManager";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Nova Image - AI 图像生成器",
-  description: "Nova Image AI 图像生成工作台",
+  title: "Nova Studio - AI 视频/图像生成器",
+  description: "Nova Studio AI 视频/图像生成工作台",
   icons: {
     icon: [
       { url: '/favicon.png', type: 'image/png' },

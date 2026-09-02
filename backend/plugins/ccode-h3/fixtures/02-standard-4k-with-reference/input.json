@@ -1,0 +1,14 @@
+{
+  "facets": { "tier": "standard", "resolution": "4K" },
+  "fields": {
+    "mode": "multi-reference",
+    "aspectRatio": "16:9",
+    "seconds": 5,
+    "prompt": "电影感运镜"
+  },
+  "media": {
+    "multiImage": ["https://host.test/api/nova/plugin-media/ref-1.png", "https://host.test/api/nova/plugin-media/ref-2.png"],
+    "multiVideo": ["https://host.test/api/nova/plugin-media/clip.mp4"],
+    "multiAudio": ["https://host.test/api/nova/plugin-media/bgm.mp3"]
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "facets": { "tier": "standard", "resolution": "768P" },
+  "fields": {
+    "mode": "multi-reference",
+    "aspectRatio": "9:16",
+    "seconds": 4,
+    "prompt": "排队中的任务"
+  },
+  "media": {}
+}
