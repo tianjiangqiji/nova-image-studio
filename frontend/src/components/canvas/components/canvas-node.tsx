@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { AlertCircle, Download, FileText, Film, Images, RefreshCw, Save, Sparkles, Upload } from "lucide-react";
+import { AlertCircle, Download, FileText, Film, Images, Music, RefreshCw, Save, Sparkles, Upload } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { canvasTheme } from "../lib/canvas-theme";
@@ -18,6 +18,8 @@ const RETRY_COOLDOWN_MS = 3000;
 type CanvasNodeProps = {
   data: CanvasNodeData;
   imageUrl?: string;
+  /** 视频/音频素材节点的本地文件播放地址（由 storageKey 解析） */
+  mediaUrl?: string;
   isSelected: boolean;
   isRelated: boolean;
   isRouteActive: boolean;
@@ -33,6 +35,8 @@ type CanvasNodeProps = {
   onTitleChange: (nodeId: string, title: string) => void;
   onContentChange: (nodeId: string, content: string) => void;
   onUploadToNode?: (nodeId: string) => void;
+  /** 视频/音频素材节点：选择本地文件 */
+  onUploadMediaToNode?: (nodeId: string) => void;
   onImportToNode?: (nodeId: string) => void;
   onImportTextToNode?: (nodeId: string) => void;
   onSaveToAssets?: (node: CanvasNodeData) => void;
@@ -48,6 +52,7 @@ type CanvasNodeProps = {
 export const CanvasNode = React.memo(function CanvasNode({
   data,
   imageUrl,
+  mediaUrl,
   isSelected,
   isRelated,
   isRouteActive,
@@ -63,6 +68,7 @@ export const CanvasNode = React.memo(function CanvasNode({
   onTitleChange,
   onContentChange,
   onUploadToNode,
+  onUploadMediaToNode,
   onImportToNode,
   onImportTextToNode,
   onSaveToAssets,
@@ -147,7 +153,9 @@ export const CanvasNode = React.memo(function CanvasNode({
           {data.type === CanvasNodeType.Image ? (
             <ImageNodeBody data={data} imageUrl={imageUrl} status={status} showImageInfo={showImageInfo} onUploadToNode={onUploadToNode} onImportToNode={onImportToNode} onSaveToAssets={onSaveToAssets} onRetry={onRetry} onRefreshProgress={onRefreshProgress} onOpenImage={onOpenImage} />
           ) : data.type === CanvasNodeType.Video ? (
-            <VideoNodeBody data={data} status={status} onRetry={onRetry} onRefreshProgress={onRefreshProgress} />
+            <VideoNodeBody data={data} mediaUrl={mediaUrl} status={status} onRetry={onRetry} onRefreshProgress={onRefreshProgress} onUploadMediaToNode={onUploadMediaToNode} />
+          ) : data.type === CanvasNodeType.Audio ? (
+            <AudioNodeBody data={data} mediaUrl={mediaUrl} onUploadMediaToNode={onUploadMediaToNode} />
           ) : data.type === CanvasNodeType.Text ? (
             <TextNodeBody data={data} onContentChange={onContentChange} onSelectNode={onSelectNode} onImportTextToNode={onImportTextToNode} onSaveTextToAssets={onSaveTextToAssets} onAiGenerate={onAiGenerate} onToggleRenderMode={onToggleRenderMode} />
           ) : data.type === CanvasNodeType.TextAnnotation ? (
@@ -332,41 +340,54 @@ function ImageNodeBody({
   );
 }
 
-/** Video 结果节点体：成功内联播放 / 链接过期兜底 / 错误 / 空态 / 生成中进度遮罩。 */
+/**
+ * Video 节点体：既是视频生成的结果节点，也可上传本地视频作为插件参考素材。
+ * 成功内联播放 / 链接过期兜底 / 错误 / 空态（可上传）/ 生成中进度遮罩。
+ */
 function VideoNodeBody({
   data,
+  mediaUrl,
   status,
   onRetry,
   onRefreshProgress,
+  onUploadMediaToNode,
 }: {
   data: CanvasNodeData;
+  mediaUrl?: string;
   status: string;
   onRetry?: (node: CanvasNodeData) => void;
   onRefreshProgress?: (node: CanvasNodeData) => void | Promise<void>;
+  onUploadMediaToNode?: (nodeId: string) => void;
 }) {
-  const videoUrl = data.metadata?.videoUrl;
+  const generatedUrl = data.metadata?.videoUrl;
   const posterUrl = data.metadata?.videoPosterUrl;
+  // 本地上传的素材（storageKey → objectURL）；生成结果优先，避免重新生成后仍播旧文件
+  const playUrl = generatedUrl || mediaUrl;
+  const isLocalMedia = !generatedUrl && Boolean(mediaUrl);
   const isGenerating = ["uploading", "submitting", "queued", "processing"].includes(status);
   const isError = status === "error";
   // 上游直链数小时后过期：<video> 加载失败时切入过期态；新任务成功写入新 videoUrl 后复位。
   // 复位用渲染期「prop 变化调整 state」写法（React 官方推荐），而不是 effect 里 setState
   const [expired, setExpired] = useState(false);
-  const [prevUrl, setPrevUrl] = useState(videoUrl);
-  if (prevUrl !== videoUrl) {
-    setPrevUrl(videoUrl);
+  const [prevUrl, setPrevUrl] = useState(playUrl);
+  if (prevUrl !== playUrl) {
+    setPrevUrl(playUrl);
     setExpired(false);
   }
 
-  const durationText = typeof data.metadata?.videoDurationSec === "number" ? `${Math.round(data.metadata.videoDurationSec)}s` : "";
-  const badgeText = durationText;
+  const durationSec = data.metadata?.videoDurationSec ?? data.metadata?.mediaDurationSec;
+  const badgeText = [
+    typeof durationSec === "number" ? `${Math.round(durationSec)}s` : "",
+    isLocalMedia && data.metadata?.bytes ? formatBytes(data.metadata.bytes) : "",
+  ].filter(Boolean).join(" · ");
 
   return (
     <div className="relative h-full w-full">
       {/* 成功态：内联播放器。controls 区域要能交互，故阻止 pointer 冒泡（不触发节点拖拽/框选） */}
-      {videoUrl && !expired && (
+      {playUrl && !expired && (
         <div className="h-full w-full" data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
           <video
-            src={videoUrl}
+            src={playUrl}
             poster={posterUrl}
             controls
             preload="metadata"
@@ -377,58 +398,144 @@ function VideoNodeBody({
         </div>
       )}
 
-      {/* 过期态：有封面用封面兜底，叠提示 + 重新生成；无封面纯提示 */}
-      {videoUrl && expired && !isGenerating && (
+      {/* 过期/失效态：有封面用封面兜底，叠提示 + 重新生成（本地素材则提示重新上传） */}
+      {playUrl && expired && !isGenerating && (
         <div className="absolute inset-0" data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
           {posterUrl && <img src={posterUrl} alt={data.title} className="h-full w-full object-contain" draggable={false} />}
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/70 p-3 text-center backdrop-blur-sm">
+          <div className="absolute inset-0 flex animate-in flex-col items-center justify-center gap-2 bg-background/70 p-3 text-center fade-in-0 backdrop-blur-sm">
             <AlertCircle className="size-6 text-destructive" />
-            <span className="text-xs text-foreground">视频链接已过期（上游仅保留数小时）</span>
-            {onRetry && <RetryButton onRetry={() => onRetry(data)} />}
+            <span className="text-xs text-foreground">
+              {isLocalMedia ? "本地视频已无法播放，请重新上传" : "视频链接已过期（上游仅保留数小时）"}
+            </span>
+            {isLocalMedia
+              ? onUploadMediaToNode && <MediaUploadButton label="重新上传" onClick={() => onUploadMediaToNode(data.id)} />
+              : onRetry && <RetryButton onRetry={() => onRetry(data)} />}
           </div>
         </div>
       )}
 
       {/* 错误态 */}
       {isError && (
-        <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-3 text-center" data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
+        <div className="flex h-full w-full animate-in flex-col items-center justify-center gap-2 p-3 text-center fade-in-0" data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
           <AlertCircle className="size-6 text-destructive" />
           <span className="line-clamp-3 text-xs text-destructive">{data.metadata?.errorDetails || "生成失败"}</span>
           {onRetry && <RetryButton onRetry={() => onRetry(data)} />}
         </div>
       )}
 
-      {/* 空态：等待编排节点生成 */}
-      {!videoUrl && !isGenerating && !isError && (
+      {/* 空态：可上传本地视频作为参考素材，也可等编排节点写入生成结果 */}
+      {!playUrl && !isGenerating && !isError && (
         <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-3 text-center text-muted-foreground" data-canvas-no-zoom>
           <Film className="size-6 opacity-70" />
-          <p className="text-[11px] leading-snug">视频生成结果节点</p>
+          <p className="max-w-[16rem] text-[11px] leading-snug">可上传本地视频作为插件参考素材，也可作为视频生成的结果节点</p>
+          {onUploadMediaToNode && <MediaUploadButton label="上传视频" onClick={() => onUploadMediaToNode(data.id)} />}
         </div>
       )}
 
       {/* 生成中遮罩（可能盖在旧结果上，如重新生成场景） */}
       {isGenerating && <NodeProgressOverlay data={data} status={status} onRefreshProgress={onRefreshProgress} />}
 
-      {/* 信息角标：时长（非生成中） */}
-      {videoUrl && !expired && !isGenerating && badgeText && (
+      {/* 信息角标：时长 / 本地文件体积（非生成中） */}
+      {playUrl && !expired && !isGenerating && badgeText && (
         <div className="pointer-events-none absolute bottom-1 left-1 rounded bg-black/55 px-1.5 py-0.5 text-[10px] text-white">{badgeText}</div>
       )}
 
-      {/* 下载按钮：hover 出现，新窗口打开直链可另存（样式对齐图片节点的"存素材"） */}
-      {videoUrl && !expired && !isGenerating && (
-        <a
-          href={videoUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          title="下载视频"
-          data-canvas-no-zoom
-          className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-1 text-[10px] text-white opacity-0 transition-opacity hover:bg-black/70 group-hover:opacity-100"
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <Download className="size-3.5" /> 下载
-        </a>
+      {/* 右上角悬浮操作：下载直链 / 替换本地素材 */}
+      {playUrl && !expired && !isGenerating && (
+        <div className="absolute top-1.5 right-1.5 flex gap-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100" data-canvas-no-zoom>
+          {isLocalMedia && onUploadMediaToNode && (
+            <button
+              type="button"
+              title="替换本地视频"
+              className="inline-flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-1 text-[10px] text-white transition-colors hover:bg-black/70 active:scale-95"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => onUploadMediaToNode(data.id)}
+            >
+              <Upload className="size-3.5" /> 替换
+            </button>
+          )}
+          <a
+            href={playUrl}
+            download={isLocalMedia ? data.metadata?.mediaName || undefined : undefined}
+            target={isLocalMedia ? undefined : "_blank"}
+            rel="noopener noreferrer"
+            title="下载视频"
+            className="inline-flex items-center gap-1 rounded-md bg-black/55 px-1.5 py-1 text-[10px] text-white transition-colors hover:bg-black/70 active:scale-95"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <Download className="size-3.5" /> 下载
+          </a>
+        </div>
       )}
     </div>
+  );
+}
+
+/** 音频素材节点体：本地上传 + 内联播放，供插件的参考音频槽引用。 */
+function AudioNodeBody({
+  data,
+  mediaUrl,
+  onUploadMediaToNode,
+}: {
+  data: CanvasNodeData;
+  mediaUrl?: string;
+  onUploadMediaToNode?: (nodeId: string) => void;
+}) {
+  const durationSec = data.metadata?.mediaDurationSec;
+  const meta = [
+    typeof durationSec === "number" ? `${Math.round(durationSec)}s` : "",
+    data.metadata?.bytes ? formatBytes(data.metadata.bytes) : "",
+  ].filter(Boolean).join(" · ");
+
+  if (!mediaUrl) {
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-3 text-center text-muted-foreground" data-canvas-no-zoom>
+        <Music className="size-6 opacity-70" />
+        <p className="max-w-[16rem] text-[11px] leading-snug">上传本地音频，作为插件的参考音频素材</p>
+        {onUploadMediaToNode && <MediaUploadButton label="上传音频" onClick={() => onUploadMediaToNode(data.id)} />}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="flex h-full w-full flex-col justify-center gap-2 px-2.5 py-2"
+      data-canvas-no-zoom
+      onPointerDown={(event) => event.stopPropagation()}
+    >
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Music className="size-3.5 shrink-0 text-primary" />
+        <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground" title={data.metadata?.mediaName}>
+          {data.metadata?.mediaName || "音频素材"}
+        </span>
+        {onUploadMediaToNode && (
+          <button
+            type="button"
+            title="替换本地音频"
+            className="shrink-0 rounded-md p-1 text-muted-foreground opacity-0 transition-all duration-150 group-hover:opacity-100 hover:bg-muted hover:text-foreground active:scale-95"
+            onClick={() => onUploadMediaToNode(data.id)}
+          >
+            <Upload className="size-3.5" />
+          </button>
+        )}
+      </div>
+      <audio src={mediaUrl} controls preload="metadata" className="w-full" />
+      {meta && <span className="text-[10px] text-muted-foreground">{meta}</span>}
+    </div>
+  );
+}
+
+/** 素材节点的上传按钮（与图片节点空态按钮同款）。 */
+function MediaUploadButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="mt-1 inline-flex items-center justify-center gap-1 rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] font-medium text-foreground transition-all duration-150 hover:bg-muted active:scale-95"
+      onClick={onClick}
+    >
+      <Upload className="size-3.5" />
+      {label}
+    </button>
   );
 }
 

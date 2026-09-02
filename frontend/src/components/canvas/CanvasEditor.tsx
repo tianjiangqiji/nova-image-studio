@@ -19,7 +19,7 @@ import { CanvasPromptGalleryImportDialog } from "./components/canvas-prompt-gall
 import { CanvasTemplateDialog, type CanvasTemplate } from "./components/canvas-template-dialog";
 import { CanvasContextMenu } from "./components/canvas-context-menu";
 import { CanvasConfigNodePanel } from "./components/canvas-config-node-panel";
-import { CanvasBatchGenerationDialog, CanvasGenerationPreviewDialog, type CanvasBatchPreviewItem } from "./components/canvas-generation-preview-dialog";
+import { CanvasBatchGenerationDialog, CanvasGenerationPreviewDialog, type CanvasBatchPreviewItem, type CanvasVideoPreviewInfo } from "./components/canvas-generation-preview-dialog";
 import { CanvasNodeSearchDialog } from "./components/canvas-node-search-dialog";
 import { FullscreenImageViewer } from "./components/fullscreen-image-viewer";
 import type { ImageActionPayload } from "@/lib/image-actions";
@@ -39,7 +39,15 @@ import {
 } from "./canvas-video-generation-service";
 import { clearPendingMedia, getPendingMedia } from "./lib/canvas-video-media-store";
 import { clearUploadProgress } from "./lib/canvas-video-upload-store";
-import { computeCanvasVideoBlockReason, effectiveVideoState, type CanvasImageOption } from "./components/canvas-video-config-section";
+import {
+  computeCanvasVideoBlockReason,
+  computeCanvasVideoSlotCounts,
+  effectiveVideoState,
+  type CanvasImageOption,
+  type CanvasMediaOption,
+} from "./components/canvas-video-config-section";
+import { isMediaStorageKey, resolveMediaUrl, storeCanvasMedia } from "./lib/media-storage";
+import { describeRejections, getAcceptAttribute, isAcceptedFile, selectFiles, type MediaKind } from "@/lib/plugin-media-config";
 import {
   getPluginRegistryServerSnapshot,
   getPluginRegistrySnapshot,
@@ -332,6 +340,10 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const containerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const uploadTargetRef = useRef<string | null>(null);
+  const mediaInputRef = useRef<HTMLInputElement>(null);
+  const mediaUploadTargetRef = useRef<{ nodeId: string; kind: MediaKind } | null>(null);
+  /** 已尝试解析过的 storageKey，避免文件缺失时反复重试 */
+  const resolvedStorageKeysRef = useRef<Set<string>>(new Set());
   const interaction = useRef<
     | { kind: "drag"; startX: number; startY: number; origin: Map<string, Position> }
     | { kind: "connect"; handle: ConnectionHandle }
@@ -377,25 +389,33 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
     return () => document.removeEventListener("visibilitychange", flushWhenHidden);
   }, []);
 
-  // ---- resolve image blob URLs for nodes that only have a storageKey ----
+  // ---- resolve blob URLs for nodes that only have a storageKey（图片 image: / 音视频 media:）----
   useEffect(() => {
     let cancelled = false;
-    const missing = nodes.filter((node) => node.type === CanvasNodeType.Image && node.metadata?.storageKey && !imageUrls[node.metadata.storageKey]);
+    const missing = nodes.filter((node) => {
+      const key = node.metadata?.storageKey;
+      return key && !imageUrls[key] && !resolvedStorageKeysRef.current.has(key);
+    });
     if (!missing.length) return;
+    // 先登记「已尝试」：blob 已丢（导入缺文件 / 清过 IndexedDB）时解析结果为空，
+    // 不做标记会让本 effect 每次渲染都重试并写回新对象，陷入渲染循环
+    for (const node of missing) resolvedStorageKeysRef.current.add(node.metadata!.storageKey!);
     void Promise.all(
       missing.map(async (node) => {
         const key = node.metadata!.storageKey!;
         // 持久化的 blob: URL 刷新后已失效，不能作为兜底（否则写回后仍 404）；优先从 IndexedDB 重建
         const content = node.metadata?.content;
         const fallback = content && !content.startsWith("blob:") ? content : "";
-        const url = await resolveImageUrl(key, fallback);
+        const url = isMediaStorageKey(key) ? await resolveMediaUrl(key) : await resolveImageUrl(key, fallback);
         return [key, url] as const;
       }),
     ).then((entries) => {
       if (cancelled) return;
+      const resolved = entries.filter(([, url]) => Boolean(url));
+      if (!resolved.length) return;
       setImageUrls((prev) => {
         const next = { ...prev };
-        for (const [key, url] of entries) if (url) next[key] = url;
+        for (const [key, url] of resolved) next[key] = url;
         return next;
       });
     });
@@ -427,6 +447,16 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
     [imageUrls],
   );
 
+  /** 视频/音频素材节点的本地文件地址：只认 media-storage 解析出的 objectURL。 */
+  const nodeMediaUrl = useCallback(
+    (node: CanvasNodeData) => {
+      const key = node.metadata?.storageKey;
+      if (!key || !isMediaStorageKey(key)) return undefined;
+      return imageUrls[key];
+    },
+    [imageUrls],
+  );
+
   // ---- 视频模式：插件注册表（视频生成完全由已安装的视频插件驱动） ----
   const pluginRegistry = useSyncExternalStore(subscribePluginRegistry, getPluginRegistrySnapshot, getPluginRegistryServerSnapshot);
   useEffect(() => {
@@ -452,6 +482,21 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
     const spec = getNodeSpec(CanvasNodeType.Video);
     return { id: nanoid(), type: CanvasNodeType.Video, title: spec.title, position, width: spec.width, height: spec.height, metadata: { status: "idle" }, ...partial };
   }, []);
+
+  // 画布上已上传文件的视频/音频素材节点：可被插件的参考视频/音频槽引用
+  const canvasMedia = useMemo<CanvasMediaOption[]>(
+    () =>
+      nodes
+        .filter((node) => (node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && isMediaStorageKey(node.metadata?.storageKey))
+        .map((node) => ({
+          id: node.id,
+          title: node.title,
+          kind: node.type === CanvasNodeType.Audio ? ("audios" as const) : ("videos" as const),
+          name: node.metadata?.mediaName,
+        })),
+    [nodes],
+  );
+  const canvasMediaIds = useMemo(() => new Set(canvasMedia.map((item) => item.id)), [canvasMedia]);
 
   // ---- history helpers ----
   const snapshot = useCallback((): HistorySnapshot => ({ nodes: nodes.map((node) => ({ ...node, metadata: { ...node.metadata } })), connections: connections.map((connection) => ({ ...connection })) }), [nodes, connections]);
@@ -533,6 +578,59 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
     };
   }, []);
 
+  const createMediaNode = useCallback((kind: "videos" | "audios", position: Position, partial?: Partial<CanvasNodeData>): CanvasNodeData => {
+    const type = kind === "audios" ? CanvasNodeType.Audio : CanvasNodeType.Video;
+    const spec = getNodeSpec(type);
+    return { id: nanoid(), type, title: spec.title, position, width: spec.width, height: spec.height, metadata: { status: "idle" }, ...partial };
+  }, []);
+
+  /** 校验并存入本地音视频文件；返回 null 表示已被拒绝（原因已提示）。 */
+  const prepareMediaFile = useCallback(
+    async (kind: MediaKind, files: File[]) => {
+      const result = selectFiles(kind, files, 1);
+      const rejection = describeRejections(kind, result);
+      const file = result.accepted[0];
+      if (!file) {
+        showToast(rejection || "该文件格式不支持", "error");
+        return null;
+      }
+      if (rejection) showToast(rejection, "info");
+      try {
+        const stored = await storeCanvasMedia(file, kind);
+        // 立刻登记 objectURL，节点无需等异步解析就能播放
+        setImageUrls((prev) => ({ ...prev, [stored.storageKey]: stored.url }));
+        return stored;
+      } catch (error) {
+        showToast(error instanceof Error ? error.message : "素材读取失败", "error");
+        return null;
+      }
+    },
+    [showToast],
+  );
+
+  /** 把本地音视频文件写进已有素材节点。 */
+  const fillMediaNode = useCallback(
+    async (nodeId: string, kind: MediaKind, files: File[]) => {
+      const stored = await prepareMediaFile(kind, files);
+      if (!stored) return;
+      pushHistory();
+      patchNode(nodeId, (node) => ({
+        ...node,
+        metadata: {
+          ...node.metadata,
+          status: "success",
+          storageKey: stored.storageKey,
+          mimeType: stored.mimeType,
+          bytes: stored.bytes,
+          mediaName: stored.name,
+          mediaDurationSec: stored.durationSec,
+          errorDetails: undefined,
+        },
+      }));
+    },
+    [patchNode, prepareMediaFile, pushHistory],
+  );
+
   const addNode = useCallback(
     (type: CanvasNodeType, position?: Position) => {
       pushHistory();
@@ -574,15 +672,23 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         prev
           .filter((node) => !idSet.has(node.id))
           .map((node) => {
-            // 剩余编排节点上指向被删图片节点的帧引用是死引用，一并清除（保留其余字段）
+            // 剩余编排节点上指向被删节点的帧引用/素材引用都是死引用，一并清除（保留其余字段）
             if (node.type !== CanvasNodeType.Config) return node;
             const frameRefs = node.metadata?.videoFrameRefs;
-            if (!frameRefs || !Object.values(frameRefs).some((refId) => refId && idSet.has(refId))) return node;
-            const nextRefs = { ...frameRefs };
-            for (const [slot, refId] of Object.entries(nextRefs)) {
-              if (refId && idSet.has(refId)) delete nextRefs[slot];
+            const mediaRefs = node.metadata?.videoMediaRefs;
+            const frameStale = frameRefs && Object.values(frameRefs).some((refId) => refId && idSet.has(refId));
+            const mediaStale = mediaRefs && Object.values(mediaRefs).some((ids) => ids?.some((refId) => idSet.has(refId)));
+            if (!frameStale && !mediaStale) return node;
+            const nextFrameRefs = { ...(frameRefs ?? {}) };
+            for (const [slot, refId] of Object.entries(nextFrameRefs)) {
+              if (refId && idSet.has(refId)) delete nextFrameRefs[slot];
             }
-            return { ...node, metadata: { ...node.metadata, videoFrameRefs: nextRefs } };
+            const nextMediaRefs: Record<string, string[]> = {};
+            for (const [slot, ids] of Object.entries(mediaRefs ?? {})) {
+              const kept = (ids ?? []).filter((refId) => !idSet.has(refId));
+              if (kept.length) nextMediaRefs[slot] = kept;
+            }
+            return { ...node, metadata: { ...node.metadata, videoFrameRefs: nextFrameRefs, videoMediaRefs: nextMediaRefs } };
           }),
       );
       setConnections((prev) => prev.filter((connection) => !idSet.has(connection.fromNodeId) && !idSet.has(connection.toNodeId)));
@@ -662,12 +768,15 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
 
   const ingestFiles = useCallback(
     async (files: FileList | File[], position?: Position) => {
-      const list = Array.from(files).filter((file) => file.type.startsWith("image/"));
-      if (!list.length) return;
+      const all = Array.from(files);
+      const images = all.filter((file) => file.type.startsWith("image/") || isAcceptedFile("images", file));
+      const videos = all.filter((file) => !images.includes(file) && isAcceptedFile("videos", file));
+      const audios = all.filter((file) => !images.includes(file) && !videos.includes(file) && isAcceptedFile("audios", file));
+      if (!images.length && !videos.length && !audios.length) return;
       pushHistory();
       const base = position ?? viewportCenterWorld();
       let offset = 0;
-      for (const file of list) {
+      for (const file of images) {
         try {
           const dataUrl = await readFileAsDataUrl(file);
           const stored = await uploadImage(dataUrl);
@@ -679,14 +788,51 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
           showToast("图片读取失败", "error");
         }
       }
+      // 拖入的音视频直接落成素材节点，供编排节点的参考视频/音频槽引用
+      for (const [kind, list] of [["videos", videos], ["audios", audios]] as const) {
+        for (const file of list) {
+          const stored = await prepareMediaFile(kind, [file]);
+          if (!stored) continue;
+          // 文件名去扩展名当标题；纯扩展名之类取不出名字时保留节点默认标题
+          const fileTitle = stored.name.replace(/\.[^.]+$/, "").trim();
+          const node = createMediaNode(kind, { x: base.x + offset, y: base.y + offset }, {
+            ...(fileTitle ? { title: fileTitle } : {}),
+            metadata: {
+              status: "success",
+              storageKey: stored.storageKey,
+              mimeType: stored.mimeType,
+              bytes: stored.bytes,
+              mediaName: stored.name,
+              mediaDurationSec: stored.durationSec,
+            },
+          });
+          setNodes((prev) => [...prev, node]);
+          offset += 28;
+        }
+      }
     },
-    [createImageNode, pushHistory, showToast, viewportCenterWorld],
+    [createImageNode, createMediaNode, prepareMediaFile, pushHistory, showToast, viewportCenterWorld],
   );
 
   const handleNodeUpload = useCallback((nodeId: string) => {
     uploadTargetRef.current = nodeId;
     fileInputRef.current?.click();
   }, []);
+
+  /** 视频/音频素材节点：按节点类型决定可选格式后打开文件选择。 */
+  const handleMediaUpload = useCallback(
+    (nodeId: string) => {
+      const node = nodes.find((item) => item.id === nodeId);
+      if (!node || (node.type !== CanvasNodeType.Video && node.type !== CanvasNodeType.Audio)) return;
+      const kind: MediaKind = node.type === CanvasNodeType.Audio ? "audios" : "videos";
+      const input = mediaInputRef.current;
+      if (!input) return;
+      mediaUploadTargetRef.current = { nodeId, kind };
+      input.accept = getAcceptAttribute(kind);
+      input.click();
+    },
+    [nodes],
+  );
 
   const handleNodeImport = useCallback((nodeId: string) => {
     setAssetPicker({ open: true, nodeId });
@@ -956,22 +1102,6 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const previewContext = useMemo(() => previewNode
     ? buildNodeGenerationContext(previewNode.id, nodes, connections, previewNode.metadata?.composerContent ?? previewNode.metadata?.prompt ?? "")
     : null, [connections, nodes, previewNode]);
-  const batchPreviewItems = useMemo<CanvasBatchPreviewItem[]>(() => selectedConfigNodes.map((node) => {
-    const prompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
-    const context = buildNodeGenerationContext(node.id, nodes, connections, prompt);
-    const limit = getConfigReferenceLimit(node);
-    const config = node.metadata?.genConfig ?? defaultConfig;
-    const reason = !context.routeValid
-      ? "路线已失效"
-      : !context.prompt.trim()
-        ? "提示词为空"
-        : limit.exceeded
-          ? "参考图超限"
-          : busyNodeIds.includes(node.id)
-            ? "正在生成"
-            : undefined;
-    return { node, valid: !reason, reason, imageCount: Number(config.count) || 1 };
-  }), [busyNodeIds, connections, defaultConfig, getConfigReferenceLimit, nodes, selectedConfigNodes]);
 
   // ---- video generation (编排节点视频模式 → 输出视频节点；素材上传 + 插件任务轮询) ----
 
@@ -1017,6 +1147,23 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
               });
             }
           }
+        } else if (field.kind === "videos" || field.kind === "audios") {
+          // 画布视频/音频素材节点引用（文件在 IndexedDB，刷新后仍可用）+ 本地内存文件
+          for (const refId of sourceNode.metadata?.videoMediaRefs?.[field.key] ?? []) {
+            const node = nodes.find((item) => item.id === refId);
+            const storageKey = node?.metadata?.storageKey;
+            const expectedType = field.kind === "audios" ? CanvasNodeType.Audio : CanvasNodeType.Video;
+            if (!node || node.type !== expectedType || !isMediaStorageKey(storageKey)) continue;
+            items.push({
+              id: node.id,
+              name: node.metadata?.mediaName || `${node.title || node.id}`,
+              kind: field.kind,
+              mediaStorageKey: storageKey,
+              mimeType: node.metadata?.mimeType,
+              bytes: node.metadata?.bytes,
+            });
+          }
+          for (const media of files) items.push({ id: media.id, name: media.file.name, kind: media.kind, file: media.file });
         } else if (field.kind === "images" && field === firstImageSlot?.field) {
           for (const ref of hydratedContext.referenceImages) {
             items.push({ id: ref.id, name: ref.name, kind: "images", referenceImage: ref });
@@ -1046,11 +1193,69 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         imageCount,
         frameRefs: sourceNode.metadata?.videoFrameRefs ?? {},
         canvasImageIds: new Set(canvasImages.map((image) => image.id)),
+        mediaRefs: sourceNode.metadata?.videoMediaRefs ?? {},
+        canvasMediaIds,
         pendingMedia: getPendingMedia(sourceNode.id),
       });
     },
-    [canvasImages, effectiveVideoConfig],
+    [canvasImages, canvasMediaIds, effectiveVideoConfig],
   );
+
+  // 预览对话框：视频模式下展示插件参数与素材槽占用（图片模式沿用 genConfig）
+  const previewVideoInfo = useMemo<CanvasVideoPreviewInfo | null>(() => {
+    if (!previewNode || (previewNode.metadata?.generationMode ?? "image") !== "video") return null;
+    const { plugin, facets, fields } = effectiveVideoConfig(previewNode);
+    if (!plugin) return { plugin: null, facets: {}, fields: {}, slots: [] };
+    const promptField = findCanvasPromptField(plugin);
+    const promptText = previewContext?.prompt ?? "";
+    const mergedFields = promptField ? { ...fields, [promptField.key]: promptText } : fields;
+    const slots = computeCanvasVideoSlotCounts({
+      plugin,
+      facets,
+      fields: mergedFields,
+      imageCount: previewContext?.imageCount ?? 0,
+      frameRefs: previewNode.metadata?.videoFrameRefs ?? {},
+      canvasImageIds: new Set(canvasImages.map((image) => image.id)),
+      mediaRefs: previewNode.metadata?.videoMediaRefs ?? {},
+      canvasMediaIds,
+      pendingMedia: getPendingMedia(previewNode.id),
+    });
+    return {
+      plugin,
+      facets,
+      fields: mergedFields,
+      slots: slots.map((slot) => ({ label: slot.field.label || slot.field.key, count: slot.count, maxCount: slot.maxCount })),
+      promptFieldLabel: promptField ? promptField.label || promptField.key : undefined,
+    };
+  }, [canvasImages, canvasMediaIds, effectiveVideoConfig, previewContext, previewNode]);
+
+  const batchPreviewItems = useMemo<CanvasBatchPreviewItem[]>(() => selectedConfigNodes.map((node) => {
+    const prompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
+    const context = buildNodeGenerationContext(node.id, nodes, connections, prompt);
+    // 视频模式：一次只产出一个结果节点，素材/参数按插件规则校验
+    if ((node.metadata?.generationMode ?? "image") === "video") {
+      const videoReason = !context.routeValid
+        ? "路线已失效"
+        : !context.prompt.trim()
+          ? "提示词为空"
+          : busyNodeIds.includes(node.id)
+            ? "正在生成"
+            : validateVideoSubmission(node, context.prompt, context.imageCount) ?? undefined;
+      return { node, valid: !videoReason, reason: videoReason, imageCount: 1 };
+    }
+    const limit = getConfigReferenceLimit(node);
+    const config = node.metadata?.genConfig ?? defaultConfig;
+    const reason = !context.routeValid
+      ? "路线已失效"
+      : !context.prompt.trim()
+        ? "提示词为空"
+        : limit.exceeded
+          ? "参考图超限"
+          : busyNodeIds.includes(node.id)
+            ? "正在生成"
+            : undefined;
+    return { node, valid: !reason, reason, imageCount: Number(config.count) || 1 };
+  }), [busyNodeIds, connections, defaultConfig, getConfigReferenceLimit, nodes, selectedConfigNodes, validateVideoSubmission]);
 
   // 对单个结果视频节点启动独立生成任务（素材上传 + 提交 + 轮询）。
   const startVideoNodeGeneration = useCallback(
@@ -2268,6 +2473,20 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         }}
       />
 
+      {/* 视频/音频素材节点的文件选择（accept 在点击前按节点类型设置） */}
+      <input
+        ref={mediaInputRef}
+        type="file"
+        hidden
+        onChange={(event) => {
+          const target = mediaUploadTargetRef.current;
+          mediaUploadTargetRef.current = null;
+          const files = Array.from(event.target.files ?? []);
+          event.target.value = "";
+          if (target && files.length) void fillMediaNode(target.nodeId, target.kind, files);
+        }}
+      />
+
       <InfiniteCanvas
         containerRef={containerRef}
         viewport={viewport}
@@ -2343,6 +2562,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
               key={node.id}
               data={node}
               imageUrl={nodeImageUrl(node)}
+              mediaUrl={nodeMediaUrl(node)}
               isSelected={selectedIds.includes(node.id)}
               isRelated={relatedIds.has(node.id)}
               isRouteActive={activeRouteNodeIds.has(node.id)}
@@ -2366,6 +2586,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
               }}
               onContentChange={handleTextChange}
               onUploadToNode={handleNodeUpload}
+              onUploadMediaToNode={handleMediaUpload}
               onImportToNode={handleNodeImport}
               onImportTextToNode={handleTextNodeImport}
               onSaveToAssets={handleSaveToAssets}
@@ -2423,13 +2644,15 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
                     facets: videoFacets,
                     fields: videoFields,
                     frameRefs: configNode.metadata?.videoFrameRefs ?? {},
+                    mediaRefs: configNode.metadata?.videoMediaRefs ?? {},
                     canvasImages,
+                    canvasMedia,
                     imageCount: referenceLimit?.imageCount ?? 0,
                     onPluginChange: (pluginId) => {
-                      // 换插件：参数与帧引用随旧插件 schema 失效，一并重置
+                      // 换插件：参数与素材引用随旧插件 schema 失效，一并重置
                       pushHistory();
                       clearPendingMedia(configNode.id);
-                      patchNode(configNode.id, (n) => ({ ...n, metadata: { ...n.metadata, videoPluginId: pluginId, videoFacets: undefined, videoFields: undefined, videoFrameRefs: undefined } }));
+                      patchNode(configNode.id, (n) => ({ ...n, metadata: { ...n.metadata, videoPluginId: pluginId, videoFacets: undefined, videoFields: undefined, videoFrameRefs: undefined, videoMediaRefs: undefined } }));
                     },
                     onFacetsChange: (facets) => {
                       recordContinuousHistory(`video-config:${configNode.id}`);
@@ -2447,6 +2670,14 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
                           else nextRefs[slot] = refId;
                         }
                         return { ...n, metadata: { ...n.metadata, videoFrameRefs: nextRefs } };
+                      });
+                    },
+                    onMediaRefsChange: (slot, nodeIds) => {
+                      patchNode(configNode.id, (n) => {
+                        const nextRefs = { ...(n.metadata?.videoMediaRefs ?? {}) };
+                        if (nodeIds.length) nextRefs[slot] = nodeIds;
+                        else delete nextRefs[slot];
+                        return { ...n, metadata: { ...n.metadata, videoMediaRefs: nextRefs } };
                       });
                     },
                   }}
@@ -2549,6 +2780,8 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         interactionMode={interactionMode}
         showPromptGallery={showPromptGallery}
         onAddImage={() => addNode(CanvasNodeType.Image)}
+        onAddVideo={() => addNode(CanvasNodeType.Video)}
+        onAddAudio={() => addNode(CanvasNodeType.Audio)}
         onAddText={() => addNode(CanvasNodeType.Text)}
         onAddAnnotation={() => addNode(CanvasNodeType.TextAnnotation)}
         onAddConfig={() => addNode(CanvasNodeType.Config)}
@@ -2606,6 +2839,12 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
           onDuplicate: () => contextMenu?.type === "node" && duplicateNodes([contextMenu.nodeId]),
           onDelete: () => contextMenu?.type === "node" && deleteNodes(selectedIds.length ? selectedIds : [contextMenu.nodeId]),
           onDeleteImageOnly: () => contextNode && clearNodeImage(contextNode.id),
+          // 上传只对素材节点开放：已承接生成结果的视频节点不提供，避免覆盖掉生成产物
+          onUploadMedia: contextNode
+            && (contextNode.type === CanvasNodeType.Audio
+              || (contextNode.type === CanvasNodeType.Video && !contextNode.metadata?.videoUrl && !contextNode.metadata?.generationTaskId))
+            ? () => handleMediaUpload(contextNode.id)
+            : undefined,
           onRetry: () => contextNode && handleNodeRetry(contextNode),
           onCrop: () => contextNode && openDialog("crop", contextNode),
           onSplit: () => contextNode && openDialog("split", contextNode),
@@ -2695,6 +2934,8 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         node={previewNode}
         context={previewContext}
         config={previewNode?.metadata?.genConfig ?? defaultConfig}
+        mode={previewNode?.metadata?.generationMode ?? "image"}
+        video={previewVideoInfo}
         onCopy={(text) => {
           void navigator.clipboard?.writeText(text);
           showToast("最终提示词已复制", "success");

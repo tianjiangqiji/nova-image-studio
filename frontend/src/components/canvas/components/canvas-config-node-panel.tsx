@@ -15,6 +15,8 @@ import {
   CanvasVideoConfigSection,
   computeCanvasVideoBlockReason,
   type CanvasImageOption,
+  type CanvasMediaOption,
+  type CanvasMediaRefs,
 } from "./canvas-video-config-section";
 import { getPendingMedia, subscribePendingMedia } from "../lib/canvas-video-media-store";
 import { findCanvasPromptField } from "../canvas-video-generation-service";
@@ -35,14 +37,19 @@ export interface CanvasVideoPanelConfig {
   fields: FieldValues;
   /** 帧槽 key → 画布图片节点 ID */
   frameRefs: Partial<Record<string, string>>;
+  /** 视频/音频槽 key → 画布素材节点 ID 列表 */
+  mediaRefs: CanvasMediaRefs;
   /** 画布上可作为帧引用的图片节点 */
   canvasImages: CanvasImageOption[];
+  /** 画布上可作为参考视频/音频的素材节点 */
+  canvasMedia: CanvasMediaOption[];
   /** @ 引用的画布图片数 */
   imageCount: number;
   onPluginChange: (pluginId: string) => void;
   onFacetsChange: (facets: FacetValues) => void;
   onFieldsChange: (patch: Record<string, string | number | boolean>) => void;
   onFrameRefChange: (patch: Partial<Record<string, string | undefined>>) => void;
+  onMediaRefsChange: (slot: string, nodeIds: string[]) => void;
 }
 
 /** 上层未接线视频模式时的空回调，保证新 props 全可选也能安全渲染。 */
@@ -121,6 +128,8 @@ export function CanvasConfigNodePanel({
       imageCount: videoConfig.imageCount,
       frameRefs: videoConfig.frameRefs,
       canvasImageIds: new Set(videoConfig.canvasImages.map(image => image.id)),
+      mediaRefs: videoConfig.mediaRefs,
+      canvasMediaIds: new Set(videoConfig.canvasMedia.map(item => item.id)),
       pendingMedia,
     });
   }, [isVideoMode, pendingMedia, prompt, videoConfig]);
@@ -209,14 +218,17 @@ export function CanvasConfigNodePanel({
               onFieldsChange={videoConfig.onFieldsChange}
               onFrameRefChange={videoConfig.onFrameRefChange}
               frameRefs={videoConfig.frameRefs}
+              mediaRefs={videoConfig.mediaRefs}
+              onMediaRefsChange={videoConfig.onMediaRefsChange}
               onPluginChange={videoConfig.onPluginChange}
               canvasImages={videoConfig.canvasImages}
+              canvasMedia={videoConfig.canvasMedia}
               imageCount={videoConfig.imageCount}
               prompt={prompt}
               pendingMedia={pendingMedia}
             />
           ) : (
-            <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border p-4 text-center text-muted-foreground">
+            <div className="flex animate-in flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-border p-4 text-center text-muted-foreground duration-200 fade-in-0">
               <Film className="size-6 opacity-70" />
               <p className="text-[11px] leading-snug">
                 {videoConfig ? "暂无已安装的视频插件" : "视频插件加载中…"}

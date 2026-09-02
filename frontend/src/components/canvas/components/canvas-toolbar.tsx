@@ -1,6 +1,6 @@
 "use client";
 
-import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, BetweenHorizontalStart, BetweenVerticalStart, CircleDot, Columns3, Grid2x2, Hand, Image as ImageIcon, Info, LayoutDashboard, LibraryBig, MousePointer2, Redo2, Rows3, Search, Settings2, SlidersHorizontal, Sparkles, Square, Trash2, Type, Undo2, Workflow } from "lucide-react";
+import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, BetweenHorizontalStart, BetweenVerticalStart, CircleDot, Columns3, Film, Grid2x2, Hand, Image as ImageIcon, Info, LayoutDashboard, LibraryBig, MousePointer2, Music, Redo2, Rows3, Search, Settings2, SlidersHorizontal, Sparkles, Square, Trash2, Type, Undo2, Workflow } from "lucide-react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -22,6 +22,8 @@ type CanvasToolbarProps = {
   interactionMode: CanvasInteractionMode;
   showPromptGallery?: boolean;
   onAddImage: () => void;
+  onAddVideo: () => void;
+  onAddAudio: () => void;
   onAddText: () => void;
   onAddAnnotation: () => void;
   onAddConfig: () => void;
@@ -49,6 +51,8 @@ export function CanvasToolbar({
   interactionMode,
   showPromptGallery = true,
   onAddImage,
+  onAddVideo,
+  onAddAudio,
   onAddText,
   onAddAnnotation,
   onAddConfig,
@@ -65,9 +69,10 @@ export function CanvasToolbar({
   onInteractionModeChange,
 }: CanvasToolbarProps) {
   return (
+    // 定位用 -translate-x-1/2（Tailwind v4 走独立的 translate 属性），与 animate-in 的 transform 关键帧互不覆盖
     <div
       data-canvas-no-zoom
-      className="absolute top-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-2xl border border-border bg-card/95 px-2 py-1.5 shadow-lg backdrop-blur"
+      className="absolute top-4 left-1/2 z-50 flex -translate-x-1/2 animate-in items-center gap-1 rounded-2xl border border-border bg-card/95 px-2 py-1.5 shadow-lg duration-200 fade-in-0 slide-in-from-top-2 backdrop-blur transition-shadow hover:shadow-xl"
       onPointerDown={(event) => event.stopPropagation()}
     >
       <Segmented
@@ -85,6 +90,16 @@ export function CanvasToolbar({
       <CanvasTooltip label="添加图片节点">
         <Button variant="ghost" size="icon-sm" onClick={onAddImage} aria-label="添加图片节点">
           <ImageIcon className="size-4" />
+        </Button>
+      </CanvasTooltip>
+      <CanvasTooltip label="添加视频节点（可上传参考视频 / 承接视频生成结果）">
+        <Button variant="ghost" size="icon-sm" onClick={onAddVideo} aria-label="添加视频节点">
+          <Film className="size-4" />
+        </Button>
+      </CanvasTooltip>
+      <CanvasTooltip label="添加音频节点（上传参考音频素材）">
+        <Button variant="ghost" size="icon-sm" onClick={onAddAudio} aria-label="添加音频节点">
+          <Music className="size-4" />
         </Button>
       </CanvasTooltip>
       <CanvasTooltip label="添加文本节点">

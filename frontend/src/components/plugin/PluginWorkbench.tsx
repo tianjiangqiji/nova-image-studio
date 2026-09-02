@@ -33,11 +33,11 @@ import {
   estimateCost,
   facetsFromModel,
   findField,
-  findFacetOption,
   findModel,
   isFieldVisible,
   resolveModel,
   resolvedMediaFields,
+  summarizeSchemaParams,
   type FacetValues,
   type FieldValues,
   type InstalledPlugin,
@@ -69,24 +69,7 @@ function buildParamSummary(
   facets: FacetValues,
   fields: FieldValues,
 ): PluginParamChip[] {
-  const schema = plugin.uiSchema;
-  const chips: PluginParamChip[] = [];
-  for (const facet of schema.modelSelector.facets) {
-    const option = findFacetOption(schema, facet.key, facets[facet.key]);
-    chips.push({ label: facet.label, value: option?.fullLabel || option?.label || String(facets[facet.key] ?? '') });
-  }
-  const scope = buildScope(facets, fields);
-  for (const field of schema.fields) {
-    if (field.type !== 'select' && field.type !== 'select-grid') continue;
-    if (!isFieldVisible(field, scope)) continue;
-    const option = (field.options || []).find(item => String(item.value) === String(fields[field.key]));
-    if (!option) continue;
-    chips.push({
-      label: field.label || field.key,
-      value: `${option.label}${field.suffix && !option.label.endsWith(field.suffix) ? field.suffix : ''}`,
-    });
-  }
-  return chips;
+  return summarizeSchemaParams(plugin, facets, fields);
 }
 
 /** 主提示词字段：第一个 textarea。用于历史卡片的正文与搜索。 */

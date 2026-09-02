@@ -1,8 +1,8 @@
 "use client";
 
 import { cn } from "@/lib/utils";
-import { computeMinimapLayout } from "../utils/canvas-minimap-layout";
-import { CanvasNodeType, type CanvasNodeData } from "../types";
+import { computeMinimapLayout, nodeMinimapColor } from "../utils/canvas-minimap-layout";
+import { type CanvasNodeData } from "../types";
 
 const THUMB_W = 300;
 const THUMB_H = 200;
@@ -25,7 +25,7 @@ export function CanvasThumbnail({ nodes, className }: { nodes: CanvasNodeData[];
     <div className={boxClass}>
       {nodes.map((node) => {
         const pos = layout.toMinimap(node.position.x, node.position.y);
-        const color = node.type === CanvasNodeType.Image ? "#10b981" : node.type === CanvasNodeType.Config ? "#60a5fa" : node.type === CanvasNodeType.Video ? "#a78bfa" : "var(--muted-foreground)";
+        const color = nodeMinimapColor(node.type, "var(--muted-foreground)");
         const width = Math.max(node.width * layout.scale, 2);
         const height = Math.max(node.height * layout.scale, 2);
         return (

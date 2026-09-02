@@ -12,7 +12,7 @@ export function CanvasNodeSearchDialog({ open, onOpenChange, nodes, onSelect }: 
   const results = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("zh-CN");
     if (!normalized) return nodes.slice(0, 30);
-    return nodes.filter((node) => `${node.title}\n${node.metadata?.content || ""}\n${node.metadata?.composerContent || ""}`.toLocaleLowerCase("zh-CN").includes(normalized)).slice(0, 50);
+    return nodes.filter((node) => `${node.title}\n${node.metadata?.content || ""}\n${node.metadata?.composerContent || ""}\n${node.metadata?.mediaName || ""}`.toLocaleLowerCase("zh-CN").includes(normalized)).slice(0, 50);
   }, [nodes, query]);
   return (
     <Dialog open={open} onOpenChange={(next) => { onOpenChange(next); if (!next) setQuery(""); }}>
@@ -29,12 +29,12 @@ export function CanvasNodeSearchDialog({ open, onOpenChange, nodes, onSelect }: 
                 key={node.id}
                 type="button"
                 aria-label={`定位到 ${node.title}`}
-                className="flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left hover:bg-muted"
+                className="flex w-full items-center justify-between gap-3 rounded-md px-2.5 py-2 text-left transition-colors duration-100 hover:bg-muted active:scale-[0.99]"
                 onClick={() => { onSelect(node); onOpenChange(false); setQuery(""); }}
               >
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium">{node.title}</span>
-                  <span className="block truncate text-xs text-muted-foreground">{node.metadata?.content || node.metadata?.composerContent || nodeTypeLabel(node.type)}</span>
+                  <span className="block truncate text-xs text-muted-foreground">{node.metadata?.content || node.metadata?.composerContent || node.metadata?.mediaName || nodeTypeLabel(node.type)}</span>
                 </span>
                 <span className="shrink-0 text-[11px] text-muted-foreground">{nodeTypeLabel(node.type)}</span>
               </button>
@@ -49,6 +49,8 @@ export function CanvasNodeSearchDialog({ open, onOpenChange, nodes, onSelect }: 
 
 function nodeTypeLabel(type: CanvasNodeType) {
   if (type === CanvasNodeType.Image) return "图片";
+  if (type === CanvasNodeType.Video) return "视频";
+  if (type === CanvasNodeType.Audio) return "音频";
   if (type === CanvasNodeType.Config) return "生成配置";
   if (type === CanvasNodeType.TextAnnotation) return "注释";
   return "文本";

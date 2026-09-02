@@ -3,8 +3,8 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 
 import { canvasTheme } from "../lib/canvas-theme";
-import { computeMinimapLayout } from "../utils/canvas-minimap-layout";
-import { CanvasNodeType, type CanvasNodeData, type ViewportTransform } from "../types";
+import { computeMinimapLayout, nodeMinimapColor } from "../utils/canvas-minimap-layout";
+import { type CanvasNodeData, type ViewportTransform } from "../types";
 
 export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { nodes: CanvasNodeData[]; viewport: ViewportTransform; viewportSize: { width: number; height: number }; onViewportChange: (viewport: ViewportTransform) => void }) {
   const theme = canvasTheme;
@@ -70,7 +70,7 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
   };
 
   return (
-    <div className="absolute bottom-24 left-6 z-50 overflow-hidden rounded-lg border shadow-2xl backdrop-blur-sm" style={{ width, height, background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>
+    <div className="absolute bottom-24 left-6 z-50 animate-in overflow-hidden rounded-lg border shadow-2xl duration-200 fade-in-0 slide-in-from-bottom-2 backdrop-blur-sm" style={{ width, height, background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>
       <div
         ref={containerRef}
         className="relative h-full w-full cursor-crosshair"
@@ -88,7 +88,7 @@ export function Minimap({ nodes, viewport, viewportSize, onViewportChange }: { n
       >
         {nodes.map((node) => {
           const pos = toMinimap(node.position.x, node.position.y);
-          const color = node.type === CanvasNodeType.Image ? "#10b981" : node.type === CanvasNodeType.Config ? "#60a5fa" : node.type === CanvasNodeType.Video ? "#a78bfa" : theme.node.muted;
+          const color = nodeMinimapColor(node.type, theme.node.muted);
           return (
             <div
               key={node.id}

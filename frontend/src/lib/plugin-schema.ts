@@ -393,6 +393,44 @@ export function estimateCost(
   return Number((price.amount * quantity).toFixed(2));
 }
 
+/** 「标签 + 取值」一条参数快照。 */
+export interface SchemaParamChip {
+  label: string;
+  value: string;
+}
+
+/**
+ * 当前 facet/字段组合的可读快照：全部 facet + 当前可见的选项类字段。
+ * 宿主工作台冻结历史记录、画布生成预览都用这一份，避免两处各写一套标签拼接。
+ */
+export function summarizeSchemaParams(
+  plugin: InstalledPlugin,
+  facets: FacetValues,
+  fields: FieldValues,
+): SchemaParamChip[] {
+  const schema = plugin.uiSchema;
+  const chips: SchemaParamChip[] = [];
+  for (const facet of schema.modelSelector.facets) {
+    const option = findFacetOption(schema, facet.key, facets[facet.key]);
+    chips.push({
+      label: facet.label,
+      value: option?.fullLabel || option?.label || String(facets[facet.key] ?? ''),
+    });
+  }
+  const scope = buildScope(facets, fields);
+  for (const field of schema.fields) {
+    if (field.type !== 'select' && field.type !== 'select-grid') continue;
+    if (!isFieldVisible(field, scope)) continue;
+    const option = (field.options || []).find(item => String(item.value) === String(fields[field.key]));
+    if (!option) continue;
+    chips.push({
+      label: field.label || field.key,
+      value: `${option.label}${field.suffix && !option.label.endsWith(field.suffix) ? field.suffix : ''}`,
+    });
+  }
+  return chips;
+}
+
 /** 校验结果：能提交时 reason 为 null。 */
 export interface SubmitCheck {
   ok: boolean;

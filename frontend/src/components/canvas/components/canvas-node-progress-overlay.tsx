@@ -153,7 +153,7 @@ export function NodeProgressOverlay({ data, status, onRefreshProgress }: NodePro
   const [refreshing, setRefreshing] = useState(false);
 
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-background/70 p-3 backdrop-blur-sm" data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
+    <div className="absolute inset-0 flex animate-in flex-col items-center justify-center gap-2 bg-background/70 p-3 duration-150 fade-in-0 backdrop-blur-sm" data-canvas-no-zoom onPointerDown={(event) => event.stopPropagation()}>
       <Spinner className="size-5 text-primary" />
       <span className="text-xs font-medium text-foreground">{statusText}</span>
 

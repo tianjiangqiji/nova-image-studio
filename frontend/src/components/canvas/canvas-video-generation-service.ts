@@ -30,6 +30,7 @@ import {
 } from "@/lib/plugin-schema";
 import { CanvasApiKeyMissingError } from "./canvas-generation-service";
 import { imageToDataUrl } from "./lib/image-storage";
+import { mediaToFile } from "./lib/media-storage";
 import { initUploadProgress, updateUploadProgress } from "./lib/canvas-video-upload-store";
 import type { ReferenceImage } from "./types-media";
 
@@ -42,7 +43,7 @@ export class CanvasVideoCredentialMissingError extends CanvasApiKeyMissingError 
   }
 }
 
-/** 一个待上传素材：本地文件，或画布图片节点引用（上传前解析为 File）。 */
+/** 一个待上传素材：本地文件、画布图片节点引用，或画布视频/音频素材节点引用（上传前解析为 File）。 */
 export type CanvasVideoMediaItem = {
   id: string;
   name: string;
@@ -51,6 +52,12 @@ export type CanvasVideoMediaItem = {
   referenceImage?: ReferenceImage;
   /** 内存文件（音/视频/上传的帧） */
   file?: File;
+  /** 画布视频/音频素材节点引用：media-storage 的 storageKey（生成时读回 File） */
+  mediaStorageKey?: string;
+  /** 引用素材的 MIME（读回 File 时带上，后端按类型校验） */
+  mimeType?: string;
+  /** 引用素材的体积，仅用于上传进度显示（本地文件直接取 file.size） */
+  bytes?: number;
 };
 
 export type CanvasVideoTaskProgress = {
@@ -140,7 +147,7 @@ export async function submitCanvasVideoGeneration(args: {
       name: item.name,
       kind: item.kind,
       // 画布图片引用在上传前不知大小：bytes=0 时进度条不显示百分比，只随状态走
-      bytes: item.file?.size ?? 0,
+      bytes: item.file?.size ?? item.bytes ?? 0,
       loaded: 0,
       status: "pending" as const,
     })),
@@ -167,7 +174,7 @@ export async function submitCanvasVideoGeneration(args: {
         updateUploadProgress(args.resultNodeId, item.id, { status: "failed", error: message });
         throw new Error(`素材「${item.name}」上传失败：${message}`);
       }
-      updateUploadProgress(args.resultNodeId, item.id, { status: "done", loaded: item.file?.size ?? 0 });
+      updateUploadProgress(args.resultNodeId, item.id, { status: "done", loaded: item.file?.size ?? item.bytes ?? 0 });
       media[slotKey].push(uploaded.url);
     }
   }
@@ -257,6 +264,8 @@ function extractVideoAsset(assets: PluginAsset[] | undefined): CanvasVideoGenera
 /** 画布图片引用 → File：先经 imageToDataUrl 统一取 dataUrl（storageKey/dataUrl/blob: 均有兜底），再 fetch 回 blob。 */
 async function resolveMediaFile(item: CanvasVideoMediaItem): Promise<File> {
   if (item.file) return item.file;
+  // 画布视频/音频素材节点：文件本体在 IndexedDB（media-storage），刷新后依然可用
+  if (item.mediaStorageKey) return mediaToFile(item.mediaStorageKey, item.name, item.mimeType);
   const ref = item.referenceImage;
   if (!ref) throw new Error(`素材「${item.name}」缺少可上传的文件`);
   const dataUrl = await imageToDataUrl(ref);

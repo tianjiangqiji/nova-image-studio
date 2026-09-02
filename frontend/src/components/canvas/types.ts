@@ -16,6 +16,7 @@ export type ViewportTransform = {
 export enum CanvasNodeType {
   Image = "image",
   Video = "video",
+  Audio = "audio",
   Text = "text",
   Config = "config",
   TextAnnotation = "textAnnotation",
@@ -96,6 +97,10 @@ export type CanvasNodeMetadata = {
   videoProgress?: number;
   /** Video: 上游归一化状态 */
   videoUpstreamStatus?: "queued" | "processing" | "completed" | "failed";
+  /** Video/Audio 素材节点：本地上传的原始文件名（storageKey 指向 media-storage 里的文件） */
+  mediaName?: string;
+  /** Video/Audio 素材节点：本地文件时长（秒） */
+  mediaDurationSec?: number;
   /** Config(视频模式): 选用的视频插件 ID；参数全由插件 ui.schema 驱动 */
   videoPluginId?: string;
   /** Config(视频模式): 插件 facet 取值（档位/分辨率等，可序列化随画布持久化） */
@@ -104,6 +109,8 @@ export type CanvasNodeMetadata = {
   videoFields?: FieldValues;
   /** Config(视频模式): 帧素材槽 key → 引用的画布图片节点 ID（首帧/尾帧等 frame 样式槽位） */
   videoFrameRefs?: Record<string, string>;
+  /** Config(视频模式): 视频/音频素材槽 key → 引用的画布视频/音频节点 ID（有序，可多个） */
+  videoMediaRefs?: Record<string, string[]>;
   /** 画布导入流程中的节点角色，用于空目标图节点也能被编排节点 @ 引用。 */
   canvasRole?: "reference" | "target" | "reference-prompt";
   /** Text 节点：渲染模式 */
