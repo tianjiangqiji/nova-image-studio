@@ -216,7 +216,7 @@ export function ProviderSettingsPanel({
                     ))}
                     <th className="px-3 py-2 text-left font-medium">文本协议</th>
                     <th className="px-3 py-2 text-left font-medium">图片模板</th>
-                    <th className="px-2 py-2" />
+                    <th className="sticky right-0 z-10 border-l bg-muted px-2 py-2" />
                   </tr>
                 </thead>
                 <tbody>
@@ -297,7 +297,7 @@ export function ProviderSettingsPanel({
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </td>
-                      <td className="px-2 py-2 text-right">
+                      <td className="sticky right-0 z-10 border-l bg-background px-2 py-2 text-right">
                         <button
                           type="button"
                           className="text-xs text-destructive"

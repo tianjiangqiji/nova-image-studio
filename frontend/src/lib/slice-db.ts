@@ -182,7 +182,7 @@ export async function saveWorkspace(draft: SliceWorkspaceDraft): Promise<void> {
 }
 
 /** 收集工作区关联的所有 Blob key（去重、过滤空值） */
-function collectWorkspaceBlobKeys(draft: SliceWorkspaceDraft): string[] {
+export function collectWorkspaceBlobKeys(draft: SliceWorkspaceDraft): string[] {
   const keys = new Set<string>();
   if (draft.sourceImageBlobKey) keys.add(draft.sourceImageBlobKey);
   if (draft.thumbnailBlobKey) keys.add(draft.thumbnailBlobKey);
@@ -191,8 +191,53 @@ function collectWorkspaceBlobKeys(draft: SliceWorkspaceDraft): string[] {
     if (asset.currentBlobKey) keys.add(asset.currentBlobKey);
     if (asset.transparentBlobKey) keys.add(asset.transparentBlobKey);
     if (asset.aiTransparentBlobKey) keys.add(asset.aiTransparentBlobKey);
+    if (asset.repairBlobKey) keys.add(asset.repairBlobKey);
+    for (const snapshot of Object.values(asset.processSnapshots ?? {})) {
+      if (snapshot?.currentBlobKey) keys.add(snapshot.currentBlobKey);
+    }
   }
   return Array.from(keys);
+}
+
+type BlobReader = (key: string) => Promise<Blob | null>;
+type BlobWriter = (blob: Blob, mimeType: string) => Promise<string>;
+
+export async function copyWorkspaceBlobReferences(
+  draft: SliceWorkspaceDraft,
+  read: BlobReader = getBlob,
+  write: BlobWriter = putBlob,
+): Promise<SliceWorkspaceDraft> {
+  const next = structuredClone(draft);
+  const copied = new Map<string, string>();
+  const copyRequired = async (key: string): Promise<string> => {
+    const existing = copied.get(key);
+    if (existing) return existing;
+    const blob = await read(key);
+    if (!blob) throw new Error(`缺少工作区 Blob: ${key}`);
+    const nextKey = await write(blob, blob.type || 'image/png');
+    if (!nextKey) throw new Error(`复制工作区 Blob 失败: ${key}`);
+    copied.set(key, nextKey);
+    return nextKey;
+  };
+  const copyOptional = async (key?: string | null): Promise<string | null | undefined> => {
+    if (key === undefined) return undefined;
+    if (key === null) return null;
+    return copyRequired(key);
+  };
+
+  next.sourceImageBlobKey = await copyRequired(draft.sourceImageBlobKey);
+  if ("thumbnailBlobKey" in draft) next.thumbnailBlobKey = await copyOptional(draft.thumbnailBlobKey);
+  for (const asset of next.assets || []) {
+    asset.originalBlobKey = await copyRequired(asset.originalBlobKey);
+    asset.currentBlobKey = await copyRequired(asset.currentBlobKey);
+    if ("transparentBlobKey" in asset) asset.transparentBlobKey = await copyOptional(asset.transparentBlobKey);
+    if ("aiTransparentBlobKey" in asset) asset.aiTransparentBlobKey = await copyOptional(asset.aiTransparentBlobKey);
+    if ("repairBlobKey" in asset) asset.repairBlobKey = await copyOptional(asset.repairBlobKey);
+    for (const snapshot of Object.values(asset.processSnapshots ?? {})) {
+      if (snapshot) snapshot.currentBlobKey = await copyRequired(snapshot.currentBlobKey);
+    }
+  }
+  return next;
 }
 
 /**
@@ -227,48 +272,7 @@ export async function copyWorkspace(id: string, newNote?: string): Promise<Slice
     const source = await getWorkspace(id);
     if (!source) return null;
 
-    // 深拷贝结构（仅含可序列化数据，Blob 通过 key 引用）
-    const next: SliceWorkspaceDraft = structuredClone(source);
-
-    // 复制源图 Blob
-    const sourceBlob = await getBlob(source.sourceImageBlobKey);
-    if (sourceBlob) {
-      next.sourceImageBlobKey = await putBlob(sourceBlob, sourceBlob.type || 'image/png');
-    }
-
-    // 复制缩略图 Blob
-    if (source.thumbnailBlobKey) {
-      const thumbBlob = await getBlob(source.thumbnailBlobKey);
-      if (thumbBlob) {
-        next.thumbnailBlobKey = await putBlob(thumbBlob, thumbBlob.type || 'image/png');
-      } else {
-        next.thumbnailBlobKey = null;
-      }
-    }
-
-    // 复制每个 asset 的 Blob 引用
-    for (const asset of next.assets || []) {
-      const originalBlob = await getBlob(asset.originalBlobKey);
-      if (originalBlob) {
-        asset.originalBlobKey = await putBlob(originalBlob, originalBlob.type || 'image/png');
-      }
-      const currentBlob = await getBlob(asset.currentBlobKey);
-      if (currentBlob) {
-        asset.currentBlobKey = await putBlob(currentBlob, currentBlob.type || 'image/png');
-      }
-      if (asset.transparentBlobKey) {
-        const transparentBlob = await getBlob(asset.transparentBlobKey);
-        asset.transparentBlobKey = transparentBlob
-          ? await putBlob(transparentBlob, transparentBlob.type || 'image/png')
-          : null;
-      }
-      if (asset.aiTransparentBlobKey) {
-        const aiBlob = await getBlob(asset.aiTransparentBlobKey);
-        asset.aiTransparentBlobKey = aiBlob
-          ? await putBlob(aiBlob, aiBlob.type || 'image/png')
-          : null;
-      }
-    }
+    const next = await copyWorkspaceBlobReferences(source);
 
     // 新 id 与时间戳
     const now = new Date().toISOString();

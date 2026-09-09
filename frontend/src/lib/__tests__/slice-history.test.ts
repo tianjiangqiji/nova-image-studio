@@ -332,4 +332,24 @@ describe('collectLiveBlobKeys', () => {
     expect(keys).toContain('ai-a');
     expect(keys).toContain('rp-a');
   });
+
+  it('keeps process snapshot blobs live while closing a workspace', () => {
+    const asset = makeAsset('a');
+    asset.processSnapshots = { transparent: { currentBlobKey: 'snapshot-a', transparent: false, aiTransparent: false } };
+    const keys = collectLiveBlobKeys(seedWorkspace([asset]), [], []);
+    expect(keys).toContain('snapshot-a');
+  });
+
+  it('collects discarded process snapshot blobs when closing a workspace', async () => {
+    const draft = seedWorkspace([makeAsset('current')]);
+    const old = makeAsset('old');
+    old.processSnapshots = { transparent: { currentBlobKey: 'discarded-snapshot', transparent: false, aiTransparent: false } };
+    useSliceStore.setState({ past: [{ assets: [old], label: '旧状态' }] });
+
+    useSliceStore.getState().closeWorkspace();
+    await Promise.resolve();
+
+    expect(deletedBlobs).toContain('discarded-snapshot');
+    expect(deletedBlobs).not.toContain(draft.sourceImageBlobKey);
+  });
 });

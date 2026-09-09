@@ -105,12 +105,9 @@ function buildDashScopeImagePayload(request, size) {
     },
   };
   // DashScope size 用星号分隔，如 1024*1024；WxH / WXH 都转成 W*H
-  const parameters = {};
+  const parameters = { watermark: false };
   if (size) {
     parameters.size = String(size).replace(/[xX]/g, '*');
-  }
-  if (hasImages) {
-    parameters.watermark = false;
   }
   if (Object.keys(parameters).length > 0) {
     payload.parameters = parameters;

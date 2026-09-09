@@ -80,4 +80,21 @@ describe('Agent image UI session binding', () => {
 
     await waitFor(() => expect(agentStore.getAgentImageBytes).toHaveBeenCalledWith('img_1', 'session-b'));
   });
+
+  it('wraps long user URLs instead of overflowing the bubble', () => {
+    const longUrl = 'https://item.taobao.com/item.htm?spm=a21dvs.23580594.0.0.275c2c1bf9ncCC&ft=t&id=1080264259614口9333';
+    render(
+      <AgentMessageBubble
+        message={{ id: 'user-1', role: 'user', text: longUrl, createdAt: 1 }}
+        imageMap={new Map()}
+        sessionId="session-b"
+        onWithdraw={vi.fn()}
+      />,
+    );
+
+    const bubble = screen.getByText(longUrl);
+    expect(bubble.className).toMatch(/break-all/);
+    expect(bubble.className).toMatch(/min-w-0/);
+    expect(bubble.parentElement?.className).toMatch(/min-w-0/);
+  });
 });

@@ -176,7 +176,7 @@ export function CanvasWorkspace({ wideMode, onConfigureApiKey, onEnableWideMode,
           <DialogHeader>
             <DialogTitle>删除画布</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">删除后无法恢复（图片也会从本地清理）。确定删除该画布吗？</p>
+          <p className="text-sm text-muted-foreground">删除后无法恢复（未被其他画布引用的图片和媒体会从本地清理）。确定删除该画布吗？</p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteId(null)}>
               取消

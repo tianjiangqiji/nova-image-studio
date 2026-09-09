@@ -575,12 +575,33 @@ export function sanitizeLayoutForModel(
     return { outputSize: 'auto', aspectRatio: 'auto' };
   }
 
-  const validRatios = getAspectRatioOptions(model, nextSize)
+  // 用户显式选择的比例在档位不支持时，降档保比例（如 gpt-image-2 4K 档无 1:1，
+  // 用户选 1:1 时应降到 2K/1K，而不是偷偷改成 16:9）。
+  const sizeRank = { '4K': 3, '2K': 2, '1K': 1, '512': 0 } as Record<string, number>;
+  let ratioOptions = getAspectRatioOptions(model, nextSize)
     .map(option => option.value)
     .filter((value): value is Exclude<AspectRatio, 'auto'> => value !== 'auto');
-  const nextRatio: AspectRatio = validRatios.some(value => value === aspectRatio)
+  const hasExplicitRatio = aspectRatio !== defaults.aspectRatio && aspectRatio !== 'auto';
+  if (hasExplicitRatio && !ratioOptions.includes(aspectRatio)) {
+    const currentRank = sizeRank[nextSize] ?? -1;
+    const fallback = validSizes
+      .filter((size): size is Exclude<OutputSize, 'auto'> => size !== 'auto')
+      .map(size => ({ size, rank: sizeRank[size] ?? -1 }))
+      .filter(entry => entry.rank < currentRank)
+      .sort((a, b) => b.rank - a.rank)
+      .find(entry => (
+        getAspectRatioOptions(model, entry.size).map(option => option.value).includes(aspectRatio)
+      ));
+    if (fallback) {
+      nextSize = fallback.size;
+      ratioOptions = getAspectRatioOptions(model, nextSize)
+        .map(option => option.value)
+        .filter((value): value is Exclude<AspectRatio, 'auto'> => value !== 'auto');
+    }
+  }
+  const nextRatio: AspectRatio = ratioOptions.some(value => value === aspectRatio)
     ? aspectRatio
-    : (validRatios.some(value => value === defaults.aspectRatio) ? defaults.aspectRatio : (validRatios[0] || '1:1'));
+    : (ratioOptions.some(value => value === defaults.aspectRatio) ? defaults.aspectRatio : (ratioOptions[0] || '1:1'));
 
   return { outputSize: nextSize, aspectRatio: nextRatio };
 }
@@ -868,7 +889,7 @@ export function resolveAgentLayout(
     };
   }
 
-  const ratioOptions = getAspectRatioOptions(model, outputSize).filter(option => option.value !== 'auto');
+  let ratioOptions = getAspectRatioOptions(model, outputSize).filter(option => option.value !== 'auto');
 
   // 2) 纵横比优先级：用户语言 > 上传图分辨率 > Agent 智能 > 模型默认
   let aspectRatio: AspectRatio = defaults.aspectRatio === 'auto'
@@ -880,6 +901,31 @@ export function resolveAgentLayout(
     ? { width: refDims.width, height: refDims.height }
     : undefined;
   const suggestedRatio = parseRatioString(intent.suggestedAspectRatio);
+
+  // 用户明确指定了比例（优先级 1）时，比例是第一优先级：当前档位不支持就降档。
+  // 例如 gpt-image-2 的 4K 档只支持 16:9/9:16/21:9，用户要 1:1 时应降到 2K/1K
+  // 保住 1:1，而不是静默贴成 9:16。档位按 4K > 2K > 1K > 512 顺序找回。
+  if (requestedRatio) {
+    const requestedRatioLabel = `${requestedRatio.width}:${requestedRatio.height}` as AspectRatio;
+    const supported = ratioOptions.some(option => option.value === requestedRatioLabel);
+    if (!supported) {
+      const sizeRank = { '4K': 3, '2K': 2, '1K': 1, '512': 0 } as Record<string, number>;
+      const currentRank = sizeRank[outputSize] ?? -1;
+      const fallback = validSizes
+        .filter((size): size is Exclude<OutputSize, 'auto'> => size !== 'auto')
+        .map(size => ({ size, rank: sizeRank[size] ?? -1 }))
+        .filter(entry => entry.rank < currentRank)
+        .sort((a, b) => b.rank - a.rank)
+        .find(entry => (
+          getAspectRatioOptions(model, entry.size).some(option => option.value === requestedRatioLabel)
+        ));
+      if (fallback) {
+        outputSize = fallback.size;
+        ratioOptions = getAspectRatioOptions(model, outputSize).filter(option => option.value !== 'auto');
+        aspectRatio = requestedRatioLabel;
+      }
+    }
+  }
 
   const ratioSource = requestedRatio || refRatio || suggestedRatio;
   if (ratioSource && ratioOptions.length > 0) {

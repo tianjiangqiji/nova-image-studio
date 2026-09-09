@@ -496,12 +496,31 @@ export function resolveDerivedImageProtocol(
   return imageProtocolForKind(kind);
 }
 
+function uniquifyDisplayNames<T extends { name: string; modelId: string }>(
+  models: T[],
+  providerNames: string[],
+): T[] {
+  const used = new Map<string, number>();
+  return models.map((model, index) => {
+    const base = model.name.trim() || model.modelId;
+    const provider = String(providerNames[index] || '').trim();
+    const clash = models.filter((item) => (item.name.trim() || item.modelId) === base).length > 1;
+    let name = clash && provider && provider !== base ? `${base}（${provider}）` : base;
+    const count = (used.get(name) || 0) + 1;
+    used.set(name, count);
+    if (count > 1) name = `${name} · ${count}`;
+    return { ...model, name };
+  });
+}
+
 export function deriveImageAndTextModels(providers: ProviderConfig[]): {
   imageModels: ImageModelConfig[];
   textModels: TextModelConfig[];
 } {
   const imageModels: ImageModelConfig[] = [];
   const textModels: TextModelConfig[] = [];
+  const imageProviderNames: string[] = [];
+  const textProviderNames: string[] = [];
 
   for (const provider of providers) {
     const apiKey = provider.apiKey.trim();
@@ -531,6 +550,7 @@ export function deriveImageAndTextModels(providers: ProviderConfig[]): {
               : preset.supportsAdvancedParams)
             : false,
         });
+        imageProviderNames.push(provider.name);
       }
 
       if (entry.uses.includes('text')) {
@@ -546,11 +566,15 @@ export function deriveImageAndTextModels(providers: ProviderConfig[]): {
           baseUrl,
           note: getTextProviderDescription(protocol),
         });
+        textProviderNames.push(provider.name);
       }
     }
   }
 
-  return { imageModels, textModels };
+  return {
+    imageModels: uniquifyDisplayNames(imageModels, imageProviderNames),
+    textModels: uniquifyDisplayNames(textModels, textProviderNames),
+  };
 }
 
 function hydrateRegistry(parsed: Partial<NovaModelRegistry>): NovaModelRegistry {

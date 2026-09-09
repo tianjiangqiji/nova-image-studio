@@ -89,15 +89,46 @@ const KNOWN_STORE_DEFS: Record<string, Record<string, { keyPath: string; indexes
 type StoreSchema = { keyPath: string | string[] | null; autoIncrement: boolean; indexes: Record<string, string | string[]> };
 type DbSchema = Record<string, { stores: Record<string, StoreSchema> }>;
 
-// localforage keyless 实例（无限画布：项目状态 + 图片 blob）。
+// localforage keyless 实例（无限画布：项目状态 + 图片/媒体 blob）。
 // 通用 IndexedDB 逻辑面向 keyPath store，无法 round-trip localforage 的无 keyPath store，故单独处理。
 const LOCALFORAGE_STORES: { name: string; storeName: string }[] = [
     { name: 'nova-image', storeName: 'canvas_app_state' },
     { name: 'nova-image', storeName: 'canvas_image_files' },
+    { name: 'nova-image', storeName: 'canvas_media_files' },
 ];
 
 type LocalForageEntry = { key: string; value: unknown } | { key: string; _blobRef: string; _blobMimeType: string };
 type LocalForageBackup = Record<string, Record<string, LocalForageEntry[]>>;
+
+/**
+ * 「仅配置」导出模式下整体跳过的 IndexedDB 库：图片字节、素材、生成结果、缓存类内容。
+ * 保留 localStorage（模型配置/设置/提示词）与 nova-agent-db（Agent 会话文字记录）。
+ */
+const CONFIG_ONLY_SKIP_DBS = new Set([
+    'nova-image-db',
+    'nova-upload-cache',
+    'nova-assets-db',
+    'nova-reverse-db',
+    'nova-slice-db',
+]);
+
+/** 「仅配置」导出模式下跳过的 localforage store（无限画布的图片和媒体文件） */
+const CONFIG_ONLY_SKIP_LOCALFORAGE_STORES = new Set(['canvas_image_files', 'canvas_media_files']);
+
+export interface ExportAllDataOptions {
+    /** false = 仅配置导出：跳过所有图片/媒体/素材/生成结果，包体积从几百 MB 降到几百 KB */
+    includeImages?: boolean;
+}
+
+/** 仅配置导出时该库是否跳过（守卫测试锚定此函数） */
+export function shouldSkipDbInConfigOnlyBackup(dbName: string): boolean {
+    return CONFIG_ONLY_SKIP_DBS.has(dbName);
+}
+
+/** 仅配置导出时该 localforage store 是否跳过 */
+export function shouldSkipLocalForageStoreInConfigOnlyBackup(storeName: string): boolean {
+    return CONFIG_ONLY_SKIP_LOCALFORAGE_STORES.has(storeName);
+}
 
 /** Blob → Uint8Array（fflate 需要 Uint8Array） */
 async function blobToUint8(blob: Blob): Promise<Uint8Array> {
@@ -152,9 +183,10 @@ function unzipAsync(data: Uint8Array): Promise<Unzipped> {
  * 导出 localforage（keyless）store：保留 key；Blob 值以二进制存入 ZIP blobs/，JSON 内留引用。
  * Blob → Uint8Array 的转换必须全部完成后才返回，否则打包时数据可能尚未写入 files（曾导致画布图片丢失）。
  */
-async function exportLocalForage(files: Record<string, Uint8Array>): Promise<LocalForageBackup> {
+async function exportLocalForage(files: Record<string, Uint8Array>, includeImages = true): Promise<LocalForageBackup> {
     const result: LocalForageBackup = {};
     for (const cfg of LOCALFORAGE_STORES) {
+        if (!includeImages && shouldSkipLocalForageStoreInConfigOnlyBackup(cfg.storeName)) continue;
         try {
             const instance = localforage.createInstance({ name: cfg.name, storeName: cfg.storeName });
             const entries: LocalForageEntry[] = [];
@@ -354,6 +386,7 @@ async function exportStore(db: IDBDatabase, storeName: string, files: Record<str
 async function exportIndexedDB(
     files: Record<string, Uint8Array>,
     onProgress?: ProgressCallback,
+    includeImages = true,
 ): Promise<{ data: IndexedDBBackup; schema: DbSchema }> {
     const allData: IndexedDBBackup = {};
     const schema: DbSchema = {};
@@ -361,6 +394,7 @@ async function exportIndexedDB(
     // 打开全部已知库并收集实际存在的 store
     const opened: { name: string; db: IDBDatabase; stores: string[] }[] = [];
     for (const dbName of Object.keys(KNOWN_STORE_DEFS)) {
+        if (!includeImages && shouldSkipDbInConfigOnlyBackup(dbName)) continue;
         const db = await openDatabase(dbName);
         if (!db) continue;
         const stores = Array.from(db.objectStoreNames);
@@ -410,9 +444,10 @@ async function exportIndexedDB(
  * 导出所有数据为 ZIP 文件
  * 使用 fflate 在 Web Worker 中异步压缩，避免大备份冻结页面
  */
-export async function exportAllData(onProgress?: ProgressCallback): Promise<Blob> {
+export async function exportAllData(onProgress?: ProgressCallback, options?: ExportAllDataOptions): Promise<Blob> {
+    const includeImages = options?.includeImages !== false;
     if (onProgress) {
-        onProgress({ percent: 0, message: '开始导出数据...' });
+        onProgress({ percent: 0, message: includeImages ? '开始导出数据...' : '开始导出配置（不含图片和媒体）...' });
     }
 
     // 导出 localStorage
@@ -423,10 +458,10 @@ export async function exportAllData(onProgress?: ProgressCallback): Promise<Blob
 
     // 逐 store 导出 IndexedDB，Blob 数据直接转为 Uint8Array 存入 files
     const files: Record<string, Uint8Array> = {};
-    const { data: indexedDBData, schema } = await exportIndexedDB(files, onProgress);
+    const { data: indexedDBData, schema } = await exportIndexedDB(files, onProgress, includeImages);
 
     // 导出 localforage 数据
-    const localForageData = await exportLocalForage(files);
+    const localForageData = await exportLocalForage(files, includeImages);
 
     // 打包元数据和 localStorage JSON
     if (onProgress) {
@@ -438,6 +473,7 @@ export async function exportAllData(onProgress?: ProgressCallback): Promise<Blob
         version: process.env.NEXT_PUBLIC_APP_VERSION || '0.0.0',
         exportDate: new Date().toISOString(),
         appName: 'Nova Studio',
+        backupMode: includeImages ? 'full' : 'config',
     });
 
     // 添加 localStorage 数据
@@ -742,6 +778,9 @@ export async function importAllData(file: File, onProgress?: ProgressCallback): 
     }
 
     const warnings: string[] = [];
+    if (metadata.backupMode === 'config') {
+        warnings.push('这是仅配置备份，不包含画布图片和媒体文件；相关引用不会恢复');
+    }
 
     // 清空现有 localStorage（仅白名单键），再写入备份数据
     for (const key of LOCAL_STORAGE_KEYS) {
@@ -773,7 +812,7 @@ export async function importAllData(file: File, onProgress?: ProgressCallback): 
     }
     const lfSkipped = await importLocalForage(localForageData, unzipped);
     if (lfSkipped > 0) {
-        warnings.push(`无限画布图片：${lfSkipped} 张因备份中缺少图片数据被跳过`);
+        warnings.push(`无限画布图片/媒体：${lfSkipped} 条因备份中缺少媒体数据被跳过`);
     }
 
     if (onProgress) {
@@ -801,9 +840,9 @@ export function downloadBlob(blob: Blob, filename: string): void {
 /**
  * 生成备份文件名
  */
-export function generateBackupFilename(): string {
+export function generateBackupFilename(configOnly = false): string {
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0];
     const timeStr = now.toTimeString().split(' ')[0].replace(/:/g, '-');
-    return `nova-backup-${dateStr}-${timeStr}.zip`;
+    return `nova-${configOnly ? 'config' : 'backup'}-${dateStr}-${timeStr}.zip`;
 }

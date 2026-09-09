@@ -48,6 +48,13 @@ test('buildDashScopeImagePayload 文生图不带参考图、尺寸转成星号�
   assert.equal(payload.parameters.size, '1024*1024');
 });
 
+test('buildDashScopeImagePayload 文生图也带 parameters.watermark=false', () => {
+  const payload = buildDashScopeImagePayload(
+    { model: 'qwen-image-3.0-pro', prompt: 'p', images: [] },
+    '1024x1024',
+  );
+  assert.equal(payload.parameters.watermark, false);
+});
 test('buildDashScopeImagePayload 超出模型参考图上限时报错并给出建议', () => {
   const images = Array.from({ length: 4 }, () => ({ data: 'QUJD', mimeType: 'image/png' }));
   assert.throws(

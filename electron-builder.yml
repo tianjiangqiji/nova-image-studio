@@ -17,12 +17,17 @@ files:
   - backend/prompts.json
   - backend/blacklist.json
   - backend/package.json
+  - backend/plugin-runtime/**
+  - backend/plugins/**
+  - '!backend/plugins/**/fixtures/**'
   - '!backend/data/**'
   - '!backend/nova-images/**'
   - '!backend/cdp-products/**'
   - '!backend/.env'
 asarUnpack:
   - node_modules/better-sqlite3/**
+  - backend/plugin-runtime/**
+  - backend/plugins/**
 # better-sqlite3 v13 的 npm 包自带全平台 N-API prebuilds（prebuilds/ 目录），
 # 运行时按平台挑选二进制；无需 electron-builder 逐平台 rebuild，
 # 且在 Linux 上交叉构建 win/mac 时 node-gyp 编译必然失败，故关闭。
@@ -40,14 +45,9 @@ nsis:
   allowToChangeInstallationDirectory: true
 mac:
   target:
-    - target: dmg
-      arch:
-        - arm64
-        - x64
     - target: zip
       arch:
         - arm64
-        - x64
   category: public.app-category.graphics-design
   artifactName: ${productName}-${version}-mac-${arch}.${ext}
 linux:

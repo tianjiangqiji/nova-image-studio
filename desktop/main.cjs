@@ -115,9 +115,12 @@ function prepareBackendEnv(port) {
   process.env.NOVA_TASK_DB = path.join(dataDir, 'nova-tasks.sqlite');
   process.env.NOVA_IMAGE_DIR = path.join(dataDir, 'nova-images');
   process.env.NOVA_CDP_DIR = path.join(dataDir, 'cdp-products');
-  // CDP 默认关；用户要连本机浏览器时自己设 NOVA_CDP_ENABLED=true。
-  process.env.NOVA_CDP_ENABLED ??= 'false';
-  process.env.NOVA_CDP_LAUNCH_ENABLED ??= 'false';
+  // 桌面单机版默认开启 CDP：Agent 的 browser_* 工具依赖 /api/nova/cdp/*。
+  // 未连接时默认允许自动拉起独立调试浏览器；用户可显式设 false 关闭。
+  // 安全边界不变：只监听 127.0.0.1，且 authorizeCdpRequest 只放行回环来源。
+  // web 部署版（backend/server.js）仍默认关闭，显式置 true 才启用。
+  process.env.NOVA_CDP_ENABLED ??= 'true';
+  process.env.NOVA_CDP_LAUNCH_ENABLED ??= 'true';
 }
 
 // 轮询后端就绪（30 秒超时）

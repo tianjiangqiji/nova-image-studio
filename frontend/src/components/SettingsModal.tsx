@@ -79,14 +79,10 @@ function getTextModelLabel(models: TextModelConfig[], id: string): string | unde
 }
 
 function modelPickerOptions(models: Array<{ id: string; name: string; modelId: string }>): { value: string; label: string }[] {
-  return models.map((model) => {
-    const base = model.name.trim() || model.modelId;
-    const sameName = models.filter((item) => (item.name.trim() || item.modelId) === base);
-    if (sameName.length === 1) return { value: model.id, label: base };
-    const sameModelId = sameName.filter((item) => item.modelId === model.modelId);
-    if (sameModelId.length === 1) return { value: model.id, label: `${base} · ${model.modelId}` };
-    return { value: model.id, label: `${base} · ${model.modelId} · ${model.id.slice(-6)}` };
-  });
+  return models.map((model) => ({
+    value: model.id,
+    label: model.name.trim() || model.modelId,
+  }));
 }
 
 function normalizeDefaults(
@@ -223,13 +219,13 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
     }
   };
 
-  const handleExport = async () => {
+  const handleExport = async (configOnly = false) => {
     setIsBackupActive(true);
     setBackupError(null);
     setBackupSuccess(null);
     try {
-      const blob = await exportAllData((progress) => setBackupProgress(progress));
-      const filename = generateBackupFilename();
+      const blob = await exportAllData((progress) => setBackupProgress(progress), { includeImages: !configOnly });
+      const filename = generateBackupFilename(configOnly);
       downloadBlob(blob, filename);
       setBackupSuccess(`数据已成功导出为 ${filename}`);
     } catch (err) {
@@ -441,11 +437,17 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
                   <Download className="w-5 h-5 text-muted-foreground mt-0.5" />
                   <div className="flex-1 space-y-2">
                     <h4 className="font-medium">导出数据</h4>
-                    <p className="text-sm text-muted-foreground">将所有数据打包为 ZIP 文件下载到本地。备份文件包含模型配置和本地记录，请自行保管。</p>
-                    <Button onClick={handleExport} disabled={isBackupActive} className="gap-2">
-                      <Download className="w-4 h-4" />
-                      全量备份
-                    </Button>
+                    <p className="text-sm text-muted-foreground">将所有数据打包为 ZIP 文件下载到本地。全量备份包含模型配置、本地记录和画布图片/媒体文件，请自行保管。仅配置导出不含图片、媒体、素材与生成结果。</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button onClick={() => void handleExport(false)} disabled={isBackupActive} className="gap-2">
+                        <Download className="w-4 h-4" />
+                        全量备份
+                      </Button>
+                      <Button onClick={() => void handleExport(true)} disabled={isBackupActive} variant="outline" className="gap-2">
+                        <Download className="w-4 h-4" />
+                        仅配置导出（不含图片）
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>

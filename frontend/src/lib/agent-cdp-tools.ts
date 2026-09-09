@@ -8,6 +8,7 @@ import {
   launchDebugBrowser,
   listCdpTargets,
   openBrowserTab,
+  purgeCdpProductImages as requestPurgeCdpProductImages,
   readBrowserPage,
   setCdpPort,
   type CdpStatus,
@@ -76,7 +77,7 @@ export const AGENT_CDP_TOOLS: AgentCdpToolDef[] = [
   },
   {
     name: 'browser_read_taobao',
-    description: '仅用于淘宝/天猫商品页：提炼标题、价格、店铺、SKU、主图链接、详情图链接。不要对非商品页调用。',
+    description: '仅用于淘宝/天猫商品页：提炼标题、店铺、SKU、主图链接、详情图链接，并自动抓取主图登记为会话图片（img_N，可直接用于提案的 referenced_image_ids）。不要对非商品页调用。',
     parameters: {
       type: 'object',
       properties: { targetId: { type: 'string', description: '商品页标签页 id' } },
@@ -112,6 +113,16 @@ export interface AgentCdpToolResult {
 
 export function isAgentCdpTool(name: string): boolean {
   return (AGENT_CDP_TOOL_NAMES as readonly string[]).includes(name);
+}
+
+export async function purgeCdpProductImages(files: string[]): Promise<number> {
+  const urls = files.filter(item => typeof item === 'string' && item.includes('/api/nova/cdp/products/'));
+  if (urls.length === 0) return 0;
+  try {
+    return await requestPurgeCdpProductImages(urls);
+  } catch {
+    return 0;
+  }
 }
 
 async function ensureDebugBrowser(): Promise<{ ok: true; status: CdpStatus; launched: boolean } | { ok: false; text: string }> {
@@ -169,6 +180,16 @@ export async function executeAgentCdpTool(
         const ensured = await ensureDebugBrowser();
         if (!ensured.ok) return { text: ensured.text };
         onProgress?.(`正在打开页面…`);
+        try {
+          const existingTargets = await listCdpTargets();
+          const existing = Array.isArray(existingTargets) ? existingTargets.find(target => target.url === url) : undefined;
+          if (existing) {
+            const prefix = ensured.launched ? `${formatConnected(ensured.status, true)}\n` : '';
+            return { text: `${prefix}已复用现有标签页。targetId=${existing.id}\nURL：${existing.url}` };
+          }
+        } catch {
+          // 列举标签页失败时保持原有打开路径
+        }
         const target = await openBrowserTab(url);
         const prefix = ensured.launched ? `${formatConnected(ensured.status, true)}\n` : '';
         return { text: `${prefix}已打开标签页。targetId=${target.targetId}\nURL：${target.url}` };
@@ -265,7 +286,6 @@ function formatProductForModel(product: TaobaoProduct): string {
     `商品标题：${product.title || '(未识别到标题)'}`,
   ];
   if (product.itemId) lines.push(`商品 ID：${product.itemId}`);
-  if (product.price) lines.push(`价格：${product.price}`);
   if (product.shopName) lines.push(`店铺：${product.shopName}`);
   lines.push(`页面 URL：${product.url}`);
   if (product.skuProps.length > 0) {

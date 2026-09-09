@@ -115,6 +115,12 @@ export async function fetchPageImages(targetId: string, urls: string[]): Promise
   return Array.isArray(data?.results) ? data.results : [];
 }
 
+export async function purgeCdpProductImages(files: string[]): Promise<number> {
+  if (files.length === 0) return 0;
+  const data = await postCdp<{ deleted?: number }>('/api/nova/cdp/purge-images', { files }, STATUS_TIMEOUT);
+  return typeof data.deleted === 'number' ? data.deleted : 0;
+}
+
 export async function launchDebugBrowser(): Promise<{ ok: boolean; message: string }> {
   return postCdp<{ ok: boolean; message: string }>('/api/nova/cdp/launch', {}, EXTRACT_TIMEOUT);
 }

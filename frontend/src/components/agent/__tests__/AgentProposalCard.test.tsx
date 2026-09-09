@@ -96,17 +96,20 @@ describe('AgentProposalCard', () => {
     expect(screen.queryByAltText('img-b1')).not.toBeInTheDocument();
   });
 
-  it('确认时把提示词中的方向改成与实际 aspectRatio 一致', () => {
+  it('确认时提示词保持模型原文，比例只走 params', () => {
     const { onApprove } = renderCard();
 
     fireEvent.click(screen.getByRole('button', { name: '允许并生成' }));
 
     expect(onApprove).toHaveBeenCalledTimes(1);
     const [prompt, , , params] = onApprove.mock.calls[0];
-    expect(prompt).toContain('9:16');
-    expect(prompt).toContain('竖版');
-    expect(prompt).not.toContain('横版');
+    expect(prompt).not.toContain('画面比例');
     expect(params.aspectRatio).toBe('9:16');
+  });
+
+  it('允许并生成按钮带 data-agent-approve，方便滚动对齐', () => {
+    renderCard();
+    expect(screen.getByRole('button', { name: '允许并生成' })).toHaveAttribute('data-agent-approve');
   });
 
   it('失败后显示可重试文案，不再写等待确认', () => {

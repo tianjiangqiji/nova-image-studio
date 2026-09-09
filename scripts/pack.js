@@ -11,6 +11,10 @@ const ZIP_PATH = path.join(ROOT, 'out.zip');
 // 后端文件列表
 const BACKEND_FILES = [
   { src: path.join(BACKEND_DIR, 'server.js'), dest: 'server.js' },
+  { src: path.join(BACKEND_DIR, 'cdp.js'), dest: 'cdp.js' },
+  { src: path.join(BACKEND_DIR, 'taobao-extract.js'), dest: 'taobao-extract.js' },
+  { src: path.join(BACKEND_DIR, 'doubao.js'), dest: 'doubao.js' },
+  { src: path.join(BACKEND_DIR, 'alibaba-dashscope.js'), dest: 'alibaba-dashscope.js' },
   { src: path.join(BACKEND_DIR, 'package.json'), dest: 'package.json' },
   { src: path.join(BACKEND_DIR, '.env.example'), dest: '.env.example' },
   { src: path.join(BACKEND_DIR, 'blacklist.json'), dest: 'blacklist.json' },

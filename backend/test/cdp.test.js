@@ -538,3 +538,24 @@ test('openTarget 在接口返回异常状态时抛出 CDP_PROTOCOL 错误', asyn
     },
   );
 });
+
+test('listPageTargets 在 /json/list 404 时回退到 /json（360ChromeX 等精简分支）', async t => {
+  // 模拟只提供 /json 的精简 Chromium 分支
+  const server = http.createServer((req, res) => {
+    if (req.url === '/json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(PAGE_TARGETS));
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end('{}');
+  });
+  const port = await listen(server);
+  t.after(() => close(server));
+
+  const targets = await listPageTargets({ host: '127.0.0.1', port, timeoutMs: 1000 });
+  assert.deepEqual(targets, [
+    { id: 'page-1', title: '淘宝网 - 淘！我喜欢', url: 'https://www.taobao.com/' },
+    { id: 'page-2', title: '商品详情', url: 'https://item.taobao.com/item.htm?id=12345' },
+  ]);
+});

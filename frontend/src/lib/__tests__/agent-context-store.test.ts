@@ -6,6 +6,7 @@ type FakeState = {
   name: string;
   stores: Map<string, Map<FakeKey, unknown>>;
   connections: Set<FakeDatabase>;
+  operations: string[];
 };
 
 class FakeRequest<T = unknown> {
@@ -61,6 +62,11 @@ class FakeObjectStore {
     return this.transaction.enqueue(request, () => Array.from(this.store().values()));
   }
 
+  getAllKeys(): FakeRequest<unknown[]> {
+    const request = new FakeRequest<unknown[]>();
+    return this.transaction.enqueue(request, () => Array.from(this.store().keys()));
+  }
+
   get(key: FakeKey): FakeRequest<unknown> {
     const request = new FakeRequest<unknown>();
     return this.transaction.enqueue(request, () => this.store().get(key));
@@ -82,6 +88,7 @@ class FakeObjectStore {
   delete(key: FakeKey): FakeRequest<undefined> {
     const request = new FakeRequest<undefined>();
     return this.transaction.enqueue(request, () => {
+      this.state.operations.push(`${this.state.name}:${this.name}:delete:${key}`);
       this.store().delete(key);
       return undefined;
     });
@@ -90,6 +97,7 @@ class FakeObjectStore {
   clear(): FakeRequest<undefined> {
     const request = new FakeRequest<undefined>();
     return this.transaction.enqueue(request, () => {
+      this.state.operations.push(`${this.state.name}:${this.name}:clear`);
       this.store().clear();
       return undefined;
     });
@@ -135,6 +143,7 @@ function createFakeIndexedDB() {
   const states = new Map<string, FakeState>();
   const openCalls: string[] = [];
   const deleteCalls: string[] = [];
+  const operations: string[] = [];
 
   const factory = {
     open(name: string): FakeRequest<IDBDatabase> {
@@ -144,7 +153,7 @@ function createFakeIndexedDB() {
         let state = states.get(name);
         const isNew = !state;
         if (!state) {
-          state = { name, stores: new Map(), connections: new Set() };
+          state = { name, stores: new Map(), connections: new Set(), operations };
           states.set(name, state);
         }
         const database = new FakeDatabase(state);
@@ -173,7 +182,7 @@ function createFakeIndexedDB() {
     },
   } as unknown as IDBFactory;
 
-  return { factory, openCalls, deleteCalls, states };
+  return { factory, openCalls, deleteCalls, operations, states };
 }
 
 function message(id: string, createdAt: number) {
@@ -303,5 +312,155 @@ describe('agent-context-store session databases', () => {
     expect(retainedBlob).not.toBeNull();
     expect(await readBlobText(retainedBlob!)).toBe('blocked');
     extraConnection.close();
+  });
+
+  it('启动清扫删除孤儿 agent blob，存活登记与任务结果 blob 不受影响', async () => {
+    const downloader = await import('@/lib/image-downloader');
+    // 存活：默认会话已登记的 img_1
+    await store.putImageRecord(imageRecord('img_1', 1));
+    await store.storeAgentImageBytes('img_1', new Blob(['live'], { type: 'text/plain' }));
+    // 孤儿：默认命名空间里无登记记录的 img_99（登记流程中断残留）
+    await store.storeAgentImageBytes('img_99', new Blob(['orphan-default'], { type: 'text/plain' }));
+    // 孤儿：已删除会话残留的命名空间 blob
+    await downloader.storeImageBlob('agent-session-deadsession-img_1', 0, new Blob(['orphan-session'], { type: 'text/plain' }));
+    // 任务结果 blob：uuid 命名空间，不属于 Agent，绝不能被清扫
+    await downloader.storeImageBlob('5dae2cfa-019e-4df1-9161-c3ba0a3b1629', 0, new Blob(['task'], { type: 'text/plain' }));
+
+    const removed = await store.sweepAgentOrphanBlobs();
+
+    expect(removed).toBe(2);
+    expect(await store.getAgentImageBytes('img_1')).not.toBeNull();
+    expect(await store.getAgentImageBytes('img_99')).toBeNull();
+    expect(await downloader.getStoredBlob('agent-session-deadsession-img_1', 0)).toBeNull();
+    const taskBlob = await downloader.getStoredBlob('5dae2cfa-019e-4df1-9161-c3ba0a3b1629', 0);
+    expect(taskBlob).not.toBeNull();
+    expect(await readBlobText(taskBlob!)).toBe('task');
+  });
+
+  it('远程图片下载在 clear 后完成时不写回 blob cache', async () => {
+    let resolveFetch!: (response: Response) => void;
+    const fetchPromise = new Promise<Response>(resolve => { resolveFetch = resolve; });
+    vi.stubGlobal('fetch', vi.fn(() => fetchPromise));
+    const record = {
+      ...imageRecord('img_1', 1),
+      remoteUrl: 'https://example.test/late.png',
+    };
+    await store.putImageRecord(record, 'remote');
+    const generation = store.getAgentSessionGeneration('remote');
+
+    const pending = store.getAgentImageBase64('img_1', 'remote', generation);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledWith(record.remoteUrl));
+    await store.clearAgentSession('remote');
+    resolveFetch(new Response(new Blob(['late'], { type: 'image/png' })));
+    await pending;
+
+    expect(await store.getAgentImageBytes('img_1', 'remote')).toBeNull();
+    expect((await store.loadAgentSession('remote')).images).toEqual([]);
+  });
+
+  it('远程参考图失效时抛出明确错误，不静默返回空参考图', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 404 })));
+    const record = {
+      ...imageRecord('img_1', 1),
+      remoteUrl: '/api/nova/cdp/products/missing.jpg',
+    };
+    await store.putImageRecord(record, 'remote-failure');
+
+    await expect(store.getAgentImageBase64('img_1', 'remote-failure')).rejects.toThrow(/参考图下载失败.*HTTP 404/);
+  });
+
+  it('clear 先失效旧 generation，旧消息和图片写入不能复活会话', async () => {
+    const generation = store.getAgentSessionGeneration('clear-race');
+    await store.putMessage(message('before', 1), 'clear-race', generation);
+    await store.putImageRecord(imageRecord('img_1', 1), 'clear-race', generation);
+    await store.storeAgentImageBytes('img_1', new Blob(['before']), 'clear-race', generation);
+
+    await store.clearAgentSession('clear-race');
+    await store.putMessage(message('late', 2), 'clear-race', generation);
+    await store.putImageRecord(imageRecord('img_1', 2), 'clear-race', generation);
+    await store.storeAgentImageBytes('img_1', new Blob(['late']), 'clear-race', generation);
+
+    expect(await store.loadAgentSession('clear-race')).toEqual({ messages: [], images: [], imageModel: null });
+    expect(await store.getAgentImageBytes('img_1', 'clear-race')).toBeNull();
+  });
+
+  it('clear 在删除图片字节前先清空会话记录', async () => {
+    await store.putImageRecord(imageRecord('img_1', 1), 'clear-order');
+    await store.storeAgentImageBytes('img_1', new Blob(['bytes']), 'clear-order');
+    fakeIndexedDB.operations.length = 0;
+
+    await store.clearAgentSession('clear-order');
+
+    const recordsCleared = fakeIndexedDB.operations.indexOf('nova-agent-db-clear-order:images:clear');
+    const bytesDeleted = fakeIndexedDB.operations.indexOf('nova-image-db:blobs:delete:agent-session-clear-order-img_1-0');
+    expect(recordsCleared).toBeGreaterThanOrEqual(0);
+    expect(bytesDeleted).toBeGreaterThan(recordsCleared);
+  });
+
+  it('只回收精确且未被消息引用的图片记录', async () => {
+    const orphan = imageRecord('img_1', 1);
+    await store.putImageRecord(orphan, 'cleanup');
+    await store.storeAgentImageBytes(orphan.imgId, new Blob(['orphan']), 'cleanup');
+    expect(await store.deleteAgentImageIfUnreferenced(orphan, 'cleanup')).toBe(true);
+    expect(await store.getAgentImageBytes(orphan.imgId, 'cleanup')).toBeNull();
+
+    const live = imageRecord('img_2', 2);
+    await store.putImageRecord(live, 'cleanup');
+    await store.storeAgentImageBytes(live.imgId, new Blob(['live']), 'cleanup');
+    await store.putMessage({ ...message('owner', 3), imageIds: [live.imgId] }, 'cleanup');
+    expect(await store.deleteAgentImageIfUnreferenced(live, 'cleanup')).toBe(false);
+    expect((await store.loadAgentSession('cleanup')).images.map(item => item.imgId)).toEqual(['img_2']);
+    expect(await store.getAgentImageBytes(live.imgId, 'cleanup')).not.toBeNull();
+  });
+
+  it('旧 generation cleanup 不删除同 imgId 的新记录和新 blob', async () => {
+    const oldGeneration = store.getAgentSessionGeneration('reuse');
+    const record = imageRecord('img_1', 1);
+    await store.putImageRecord(record, 'reuse', oldGeneration);
+    await store.storeAgentImageBytes(record.imgId, new Blob(['old']), 'reuse', oldGeneration);
+    await store.clearAgentSession('reuse');
+
+    const newGeneration = store.getAgentSessionGeneration('reuse');
+    const newRecord = { ...record };
+    await store.putImageRecord(newRecord, 'reuse', newGeneration);
+    await store.storeAgentImageBytes(newRecord.imgId, new Blob(['new']), 'reuse', newGeneration);
+    expect(await store.deleteAgentImageIfUnreferenced(record, 'reuse', oldGeneration)).toBe(false);
+
+    expect((await store.loadAgentSession('reuse')).images.map(item => item.imgId)).toEqual(['img_1']);
+    const blob = await store.getAgentImageBytes(record.imgId, 'reuse');
+    expect(blob).not.toBeNull();
+    expect(await readBlobText(blob!)).toBe('new');
+  });
+
+  it('迁移旧单任务记录，并按 taskId 独立保存和删除待恢复任务', async () => {
+    await store.loadAgentSession('tasks');
+    const meta = fakeIndexedDB.states.get('nova-agent-db-tasks')!.stores.get('meta')!;
+    const legacyTask: import('@/lib/agent-context-store').PendingGenerationData = {
+      taskId: 'legacy-task',
+      proposal: { action: 'generate', prompt: '旧任务', referencedImageIds: [], reason: '旧提案' },
+      pendingAnalysis: '旧分析',
+      pendingReasoning: '',
+      selectedImageIds: [],
+      model: 'image-model',
+      outputSize: '1K',
+      aspectRatio: '1:1',
+      temperature: 1,
+      parallelCount: 1,
+      startedAt: 1,
+    };
+    meta.set('pendingGeneration', { key: 'pendingGeneration', value: JSON.stringify(legacyTask) });
+
+    expect(await store.loadPendingGenerationTasks('tasks')).toEqual([legacyTask]);
+    await vi.waitFor(() => expect(JSON.parse((meta.get('pendingGeneration') as { value: string }).value)).toEqual({
+      version: 2,
+      tasks: { 'legacy-task': legacyTask },
+    }));
+
+    const newerTask = { ...legacyTask, taskId: 'newer-task', proposal: { ...legacyTask.proposal, prompt: '新任务' }, startedAt: 2 };
+    await store.savePendingGenerationTask(newerTask, 'tasks');
+    expect(await store.loadPendingGenerationTasks('tasks')).toEqual([legacyTask, newerTask]);
+
+    await store.removePendingGenerationTask('legacy-task', 'tasks');
+    expect(await store.loadPendingGenerationTasks('tasks')).toEqual([newerTask]);
   });
 });

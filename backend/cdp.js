@@ -180,7 +180,7 @@ async function getCdpStatus(options) {
 
 async function listPageTargets(options) {
   const opts = normalizeOptions(options);
-  const targets = await httpGetJson(opts, '/json/list');
+  const targets = await httpGetTargetsJson(opts);
   if (!Array.isArray(targets)) {
     throw new CdpError('CDP_PROTOCOL', '浏览器调试接口 /json/list 返回格式异常');
   }
@@ -189,10 +189,23 @@ async function listPageTargets(options) {
     .map(target => ({ id: target.id, title: target.title || '', url: target.url || '' }));
 }
 
+// 部分 Chromium 分支（如 360ChromeX）只提供 /json，/json/list 直接 404。
+// 两者返回结构一致，404 时回退 /json。
+async function httpGetTargetsJson(opts) {
+  try {
+    return await httpGetJson(opts, '/json/list');
+  } catch (error) {
+    if (error instanceof CdpError && /HTTP 404/.test(error.message)) {
+      return await httpGetJson(opts, '/json');
+    }
+    throw error;
+  }
+}
+
 // 找到目标标签页并建立 WebSocket 连接；page target 的 WS 直接收 Runtime/Page 域
 // 命令，无需先连 browser 级 WS 再 Target.attachToTarget。
 async function connectPageWs(opts, targetId) {
-  const targets = await httpGetJson(opts, '/json/list');
+  const targets = await httpGetTargetsJson(opts);
   const target = Array.isArray(targets)
     ? targets.find(item => item && item.id === targetId)
     : null;

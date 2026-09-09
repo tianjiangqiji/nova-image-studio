@@ -232,7 +232,13 @@ export function AgentChatWorkspace({ activeSessionId, wideMode = false, disabled
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const approve = el.querySelector('[data-agent-approve]') as HTMLElement | null;
+    if (approve) {
+      approve.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    el.scrollTop = el.scrollHeight;
   }, [agent.messages, agent.streamingText, agent.proposal, agent.phase, agent.generationDraft]);
 
   const busy = agent.phase !== 'idle';
@@ -568,7 +574,7 @@ export function AgentChatWorkspace({ activeSessionId, wideMode = false, disabled
     <div
       ref={containerRef}
       className={cn(
-        'relative flex h-full flex-1 min-h-[400px] flex-col rounded-2xl border border-border bg-card/60',
+        'relative flex h-full min-w-0 flex-1 min-h-[400px] flex-col rounded-2xl border border-border bg-card/60 overflow-hidden',
         wideMode && 'h-full min-h-0 w-full'
       )}
       onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
@@ -616,7 +622,7 @@ export function AgentChatWorkspace({ activeSessionId, wideMode = false, disabled
 
       <div
         ref={scrollRef}
-        className="flex-1 space-y-4 overflow-y-auto px-4 py-4"
+        className="min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-4 py-4"
       >
         {agent.messages.length === 0 && !agent.streamingText && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
@@ -633,16 +639,17 @@ export function AgentChatWorkspace({ activeSessionId, wideMode = false, disabled
             imageMap={imageMap}
             sessionId={activeSessionId}
             onWithdraw={agent.withdrawTurn}
+            messageActionsDisabled={agent.messageActionsDisabled}
             onReedit={agent.reeditProposal}
             reeditDisabled={agent.phase !== 'idle'}
             onCopy={() => {
               navigator.clipboard.writeText(message.text).catch(() => {});
               showToast('已复制到剪贴板', 'success');
             }}
-            onDelete={() => setDeleteConfirmMsgId(message.id)}
-            onRollback={() => setRollbackConfirmMsgId(message.id)}
+            onDelete={agent.messageActionsDisabled ? undefined : () => setDeleteConfirmMsgId(message.id)}
+            onRollback={agent.messageActionsDisabled ? undefined : () => setRollbackConfirmMsgId(message.id)}
             onRetry={
-              message.id === agent.retryableMessageId && agent.phase === 'idle'
+              message.id === agent.retryableMessageId && agent.phase === 'idle' && !agent.messageActionsDisabled
                 ? () => setRetryConfirmMsgId(message.id)
                 : undefined
             }

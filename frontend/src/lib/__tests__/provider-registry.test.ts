@@ -243,6 +243,31 @@ describe('provider registry', () => {
     });
   });
 
+  it('disambiguates duplicate display names with the provider name', () => {
+    const derived = deriveImageAndTextModels([
+      {
+        id: 'prov_a',
+        name: 'gpt',
+        kind: 'openai-compatible',
+        apiKey: 'test-key',
+        baseUrl: 'https://example.test/v1',
+        models: [{ modelId: 'gpt-image-2', name: 'gpt-image-2', uses: ['image'] }],
+      },
+      {
+        id: 'prov_b',
+        name: 'gulie',
+        kind: 'openai-compatible',
+        apiKey: 'other-key',
+        baseUrl: 'https://other.example/v1',
+        models: [{ modelId: 'gpt-image-2', name: 'gpt-image-2', uses: ['image'] }],
+      },
+    ]);
+    expect(derived.imageModels.map((model) => model.name).sort()).toEqual([
+      'gpt-image-2（gpt）',
+      'gpt-image-2（gulie）',
+    ]);
+  });
+
   it('does not persist private gateway hostnames from tests', () => {
     saveRegistry({
       providers: [{

@@ -26,6 +26,28 @@ interface CachedUploadImage {
 const DB_NAME = 'nova-upload-cache';
 const DB_VERSION = 1;
 const STORE_NAME = 'images';
+export const UPLOAD_CACHE_MAX_ENTRIES = 32;
+export const UPLOAD_CACHE_MAX_BYTES = 96 * 1024 * 1024;
+
+type UploadCacheSizeRecord = Pick<CachedUploadImage, 'key' | 'createdAt' | 'processedSize' | 'dataUrl'>;
+
+function getCachedRecordBytes(record: UploadCacheSizeRecord): number {
+    return Math.max(record.processedSize || 0, dataUrlToSize(record.dataUrl));
+}
+
+export function getUploadCacheEvictionKeys(records: UploadCacheSizeRecord[]): string[] {
+    const oldestFirst = [...records].sort((a, b) => a.createdAt - b.createdAt || a.key.localeCompare(b.key));
+    let keptCount = oldestFirst.length;
+    let keptBytes = oldestFirst.reduce((total, record) => total + getCachedRecordBytes(record), 0);
+    const evicted: string[] = [];
+    for (const record of oldestFirst) {
+        if (keptCount <= UPLOAD_CACHE_MAX_ENTRIES && keptBytes <= UPLOAD_CACHE_MAX_BYTES) break;
+        evicted.push(record.key);
+        keptCount -= 1;
+        keptBytes -= getCachedRecordBytes(record);
+    }
+    return evicted;
+}
 
 // 单例缓存数据库连接（参考 image-db.ts 的模式），避免每次读写 open 后泄漏连接。
 let uploadCacheDbPromise: Promise<IDBDatabase | null> | null = null;
@@ -63,23 +85,60 @@ async function getCachedImage(key: string): Promise<CachedUploadImage | null> {
     if (!db) return null;
 
     return new Promise((resolve) => {
-        const tx = db.transaction(STORE_NAME, 'readonly');
-        const req = tx.objectStore(STORE_NAME).get(key);
-        req.onsuccess = () => resolve((req.result as CachedUploadImage) || null);
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const req = store.get(key);
+        let cached: CachedUploadImage | null = null;
+        req.onsuccess = () => {
+            const record = (req.result as CachedUploadImage) || null;
+            if (!record) return;
+            cached = { ...record, createdAt: Date.now() };
+            store.put(cached);
+        };
         req.onerror = () => resolve(null);
+        tx.oncomplete = () => resolve(cached);
+        tx.onerror = () => resolve(null);
+        tx.onabort = () => resolve(null);
+    });
+}
+
+async function writeCachedImage(
+    db: IDBDatabase,
+    record: CachedUploadImage,
+    evictAllOlder: boolean,
+): Promise<boolean> {
+    return new Promise((resolve) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const request = store.getAll();
+        let settled = false;
+        const finish = (value: boolean) => {
+            if (settled) return;
+            settled = true;
+            resolve(value);
+        };
+        request.onsuccess = () => {
+            const existing = ((request.result as CachedUploadImage[]) || [])
+                .filter(item => item.key !== record.key);
+            const records = [...existing, record];
+            const evictionKeys = new Set(
+                evictAllOlder ? existing.map(item => item.key) : getUploadCacheEvictionKeys(records),
+            );
+            for (const key of evictionKeys) store.delete(key);
+            if (!evictionKeys.has(record.key)) store.put(record);
+        };
+        request.onerror = () => finish(false);
+        tx.oncomplete = () => finish(true);
+        tx.onerror = () => finish(false);
+        tx.onabort = () => finish(false);
     });
 }
 
 async function saveCachedImage(record: CachedUploadImage): Promise<void> {
     const db = await openDB();
     if (!db) return;
-
-    return new Promise((resolve) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        tx.objectStore(STORE_NAME).put(record);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-    });
+    if (await writeCachedImage(db, record, false)) return;
+    await writeCachedImage(db, record, true);
 }
 
 function bufferToHex(buffer: ArrayBuffer): string {

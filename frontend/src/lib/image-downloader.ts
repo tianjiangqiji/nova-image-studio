@@ -5,6 +5,7 @@ const MAX_FALLBACK_STORE_SIZE = 50;
 interface FallbackEntry {
   blob: Blob;
   lastAccess: number;
+  ownerGeneration?: number;
 }
 
 const blobFallbackStore = new Map<string, FallbackEntry>();
@@ -32,12 +33,12 @@ export function getFallbackBlob(key: string): Blob | undefined {
   return entry.blob;
 }
 
-export function setFallbackBlob(key: string, blob: Blob): void {
+export function setFallbackBlob(key: string, blob: Blob, ownerGeneration?: number): void {
   // 如果 key 已存在则更新，否则先淘汰旧条目
   if (!blobFallbackStore.has(key)) {
     evictOldestIfNeeded();
   }
-  blobFallbackStore.set(key, { blob, lastAccess: Date.now() });
+  blobFallbackStore.set(key, { blob, lastAccess: Date.now(), ownerGeneration });
 }
 
 
@@ -183,26 +184,46 @@ export async function fetchImageAsBlob(
   throw lastError || new Error('图片下载失败');
 }
 
-async function storeImageBlobInternal(jobId: string, imageIndex: number, blob: Blob): Promise<void> {
+async function storeImageBlobInternal(
+  jobId: string,
+  imageIndex: number,
+  blob: Blob,
+  shouldStore: () => boolean,
+  ownerGeneration?: number,
+): Promise<void> {
   const db = await openImageDb();
+  if (!shouldStore()) return;
   if (!db) {
-    setFallbackBlob(`${jobId}-${imageIndex}`, blob);
+    setFallbackBlob(`${jobId}-${imageIndex}`, blob, ownerGeneration);
     return;
   }
 
   return new Promise<void>((resolve) => {
     const tx = db.transaction(BLOBS_STORE, 'readwrite');
-    tx.objectStore(BLOBS_STORE).put({ key: `${jobId}-${imageIndex}`, jobId, imageIndex, blob, createdAt: Date.now() });
+    tx.objectStore(BLOBS_STORE).put({
+      key: `${jobId}-${imageIndex}`,
+      jobId,
+      imageIndex,
+      blob,
+      createdAt: Date.now(),
+      ownerGeneration,
+    });
     tx.oncomplete = () => resolve();
     tx.onerror = () => {
-      setFallbackBlob(`${jobId}-${imageIndex}`, blob);
+      if (shouldStore()) setFallbackBlob(`${jobId}-${imageIndex}`, blob, ownerGeneration);
       resolve();
     };
   });
 }
 
-export async function storeImageBlob(jobId: string, imageIndex: number, blob: Blob): Promise<void> {
-  return storeImageBlobInternal(jobId, imageIndex, blob);
+export async function storeImageBlob(
+  jobId: string,
+  imageIndex: number,
+  blob: Blob,
+  shouldStore: () => boolean = () => true,
+  ownerGeneration?: number,
+): Promise<void> {
+  return storeImageBlobInternal(jobId, imageIndex, blob, shouldStore, ownerGeneration);
 }
 
 export async function getStoredBlob(jobId: string, imageIndex: number): Promise<Blob | null> {
@@ -248,6 +269,29 @@ export async function resolveStoredImageRefs(jobId: string, images: string[]): P
   };
 }
 
+export async function deleteStoredBlobIfOwner(
+  jobId: string,
+  imageIndex: number,
+  ownerGeneration: number,
+): Promise<void> {
+  const key = `${jobId}-${imageIndex}`;
+  const fallback = blobFallbackStore.get(key);
+  if (fallback?.ownerGeneration === ownerGeneration) blobFallbackStore.delete(key);
+
+  const db = await openImageDb();
+  if (!db || !db.objectStoreNames.contains(BLOBS_STORE)) return;
+  return new Promise<void>((resolve) => {
+    const tx = db.transaction(BLOBS_STORE, 'readwrite');
+    const store = tx.objectStore(BLOBS_STORE);
+    const request = store.get(key);
+    request.onsuccess = () => {
+      if (request.result?.ownerGeneration === ownerGeneration) store.delete(key);
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+}
+
 export async function deleteStoredBlobs(jobId: string, imageCount?: number): Promise<void> {
   const fallbackPrefix = `${jobId}-`;
   for (const key of Array.from(blobFallbackStore.keys())) {
@@ -283,6 +327,50 @@ export async function deleteStoredBlobs(jobId: string, imageCount?: number): Pro
     tx.oncomplete = () => resolve();
     tx.onerror = () => resolve();
   });
+}
+
+/**
+ * 清扫 Agent 命名空间的孤儿 blob：登记记录已不存在（生成中断、旧版本残留），
+ * 但字节仍留在 blobs store 里，会把备份包越撑越大。
+ * 只处理 Agent 自己的 key（默认会话 `img_N-x`、其他会话 `agent-session-<sid>-img_N-x`），
+ * 任务结果等 uuid key 一律不动。返回删除的 blob 数。
+ */
+export async function deleteUnreferencedAgentBlobs(validJobIds: ReadonlySet<string>): Promise<number> {
+  const isAgentKey = (key: string) => /^img_\d+-\d+$/.test(key) || key.startsWith('agent-session-');
+  let removed = 0;
+  for (const key of Array.from(blobFallbackStore.keys())) {
+    if (!isAgentKey(key)) continue;
+    const jobId = key.slice(0, key.lastIndexOf('-'));
+    if (!validJobIds.has(jobId)) {
+      blobFallbackStore.delete(key);
+      removed++;
+    }
+  }
+
+  const db = await openImageDb();
+  if (!db || !db.objectStoreNames.contains(BLOBS_STORE)) return removed;
+
+  const keys = await new Promise<string[]>((resolve) => {
+    const tx = db.transaction(BLOBS_STORE, 'readonly');
+    const request = tx.objectStore(BLOBS_STORE).getAllKeys();
+    request.onsuccess = () => resolve(request.result.map(String));
+    request.onerror = () => resolve([]);
+  });
+  const orphans = keys.filter(key => {
+    if (!isAgentKey(key)) return false;
+    const jobId = key.slice(0, key.lastIndexOf('-'));
+    return !validJobIds.has(jobId);
+  });
+  if (orphans.length === 0) return removed;
+
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction(BLOBS_STORE, 'readwrite');
+    const store = tx.objectStore(BLOBS_STORE);
+    for (const key of orphans) store.delete(key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+  return removed + orphans.length;
 }
 
 export interface DownloadResult {

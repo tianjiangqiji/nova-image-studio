@@ -255,7 +255,7 @@ nova-image-studio/
 
 The desktop build packs frontend, backend and the Electron shell into a single installer. No separate Node.js setup is required.
 
-- **Install**: download the platform package from Releases (macOS `.dmg` / `.zip`, Windows `.exe`).
+- **Install**: download the platform package from Releases (macOS Apple Silicon `.zip`, Windows `.exe`).
 
   > ⚠️ Packages are unsigned: on macOS first-open via Finder **right-click → Open**; on Windows choose **Run anyway** at SmartScreen.
 
@@ -265,7 +265,7 @@ The desktop build packs frontend, backend and the Electron shell into a single i
   npm install                 # root deps (electron / electron-builder)
   npm run install:all         # frontend + backend deps
   npm run electron:dist:win   # Windows installer
-  npm run electron:dist:mac   # macOS package
+  npm run electron:dist:mac   # macOS Apple Silicon zip (arm64)
   ```
 
   Artifacts land in `release/`.

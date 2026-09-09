@@ -125,10 +125,11 @@ export interface AgentProposalData {
 export function extractProductLinks(text: string): string[] {
   const keys: string[] = [];
   const seen = new Set<string>();
-  const pattern = /https?:\/\/[^\s，。；；）)]+/g;
+  const pattern = /https?:\/\/[^\s，。；、！？：）)】］\]》〉”’"'<>]+/g;
+  const trailingPunctuation = /[.,;!?]+$/u;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(text)) !== null) {
-    const key = normalizeProductKey(match[0]);
+    const key = normalizeProductKey(match[0].replace(trailingPunctuation, ''));
     if (key && !seen.has(key)) {
       seen.add(key);
       keys.push(key);
@@ -203,37 +204,19 @@ export function scopeAgentProposal(proposal: AgentProposal, images: AgentImageRe
 }
 
 /**
- * 让用户可见的方向词与最终提交的 aspectRatio 保持一致。
- * Agent 可能先写出“横版/竖版”，而模型合法化后实际比例发生了变化，
- * 因此在提案确认前统一修正方向词和显式比例。
+ * 张数由 parallel_count 控制，prompt 只描述「这一张」画面。
+ * 模型常把「生成 3 张」写进提示词，绘图模型就会拼成宫格。提交前剥掉。
  */
-export function alignAgentPromptAspectRatio(prompt: string, aspectRatio?: string): string {
-  const ratio = String(aspectRatio || '').trim();
-  if (!ratio || ratio === 'auto') return prompt;
-
-  const match = ratio.match(/^\s*(\d+(?:\.\d+)?)\s*[:：]\s*(\d+(?:\.\d+)?)\s*$/);
-  if (!match) return prompt;
-  const width = Number(match[1]);
-  const height = Number(match[2]);
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return prompt;
-
-  const direction = width === height ? 'square' : width > height ? 'landscape' : 'portrait';
-  const directionLabel = direction === 'square' ? '正方形' : direction === 'landscape' ? '横版' : '竖版';
-  const ratioPattern = /\b\d+(?:\.\d+)?\s*[:：]\s*\d+(?:\.\d+)?\b/g;
-  let aligned = prompt.replace(ratioPattern, ratio);
-
-  // 只替换构图声明词（横版/竖版等）；"横向排布""竖向滚动"是布局副词，不能动
-  if (direction === 'landscape') {
-    aligned = aligned.replace(/竖版|竖屏|纵版|纵屏|肖像版|portrait/gi, '横版');
-  } else if (direction === 'portrait') {
-    aligned = aligned.replace(/横版|横屏|宽屏|风景版|landscape/gi, '竖版');
-  } else {
-    aligned = aligned.replace(/横版|横屏|宽屏|风景版|landscape|竖版|竖屏|纵版|纵屏|肖像版|portrait/gi, '正方形');
-  }
-
-  if (!aligned.includes(ratio)) aligned = `${aligned}${aligned.trim() ? '，' : ''}画面比例 ${ratio}`;
-  if (!aligned.includes(directionLabel)) aligned = `${aligned}${aligned.trim() ? '，' : ''}${directionLabel}`;
-  return aligned;
+export function stripAgentPromptBatchLanguage(prompt: string): string {
+  let text = String(prompt || '');
+  const count = '(?:[2-9]|[1-9]\\d+|两|三|四|五|六|七|八|九|十)';
+  text = text.replace(/拼接(?:成一[张幅])?|拼成一[张幅]|拼图|拼贴|三联图|三宫格|九宫格|宫格构图|分屏展示|photogrid|triptych|\bcollage\b/gi, '');
+  text = text.replace(new RegExp(`(生成|做|出|制作|拍摄)\\s*${count}\\s*张`, 'g'), '$1一张');
+  text = text.replace(new RegExp(`${count}\\s*张(?:彼此)?独立(?:完整)?的?`, 'g'), '一张独立完整的');
+  text = text.replace(new RegExp(`一组\\s*${count}\\s*张`, 'g'), '一张');
+  text = text.replace(new RegExp(`${count}\\s*张(?=正方形|1\\s*[:：]\\s*1|3\\s*[:：]\\s*4|9\\s*[:：]\\s*16|16\\s*[:：]\\s*9|竖版|横版|主图|构图)`, 'g'), '一张');
+  text = text.replace(/[，,]{2,}/g, '，').replace(/^[，、,\s]+|[，、,\s]+$/g, '');
+  return text;
 }
 
 // ===== System 指令 =====
@@ -254,14 +237,16 @@ export const AGENT_SYSTEM_INSTRUCTIONS = `你是一个图像生成与编辑助�
 - action="edit"：在已有图片基础上修改。referenced_image_ids 必须从目录里挑出要参考或被修改的图片 id，支持多张。
 - prompt 要写成一段完整、可直接用于绘图模型的高质量中文提示词，聚焦于用户想要的画面效果、风格和修改意图。
 - ⚠️ 禁止在 prompt 中描述参考图的具体内容（如"一只橘猫""蓝色天空"等），因为图片模型本身支持图片输入，文字描述反而会干扰模型对图片的理解。请在 prompt 中用"图1""图2""图3"指代参考图，编号按 referenced_image_ids 数组顺序（第1个=图1，第2个=图2）。例如：写"参考图1的风格，将主体替换为图2中的建筑"而非"参考一张有蓝色天空和橘猫的图片"。
+- 一致性优先：action="edit"、或用户要求「同一产品/同一主体/这个角色」时，prompt 必须明确要求与参考图一致——产品的造型、比例、颜色、材质、品牌标识、Logo 与文字商标完全保持原样，禁止重新设计产品、改动品牌元素、或新增原图中没有的部件；只按用户意图调整背景、光线、构图、氛围或排版。只有当用户明确说「重新设计/换个产品」时才允许改变产品本身。
 - reason 用一句话向用户说明你的判断（例如「你想把这张橘猫的帽子换成红色，我建议这样改」）。
+- 用户要「把几张已有图片各自处理」（如「把图1和图2都调成3:4」「这两张各改一版」）时，每张图单独调用一次 propose_image_action：referenced_image_ids 只放要被处理的那一张，parallel_count 给 1 或 null。同一轮可以连续调用多次，系统会把多个提案排队、逐个交给用户确认。把多张图放进同一个 referenced_image_ids 表示「把它们参考/融合进同一画面」，仅适用于用户明确要合成、混搭或参考风格的场景。
 
 关于生图参数（你只给「语义建议」，系统会按用户当前选择的图像模型自动合法化，你不用关心具体像素或某个模型支不支持）：
 - requested_aspect_ratio：只有当用户用语言明确表达了画面比例或方向时才填，否则给 null。横屏类填 "16:9"，竖屏/手机屏填 "9:16"，正方形填 "1:1"，可用 "w:h" 形式（如 "3:2"、"4:5"）。这是最高优先级。
 - suggested_aspect_ratio：无论用户是否说过，都给一个你认为最合适的比例（如肖像给 "2:3"、风景给 "16:9"、图标给 "1:1"）。当用户没明确指定、也没有可参考的上传图时作为兜底。
 - requested_output_size：只有当用户明确要求清晰度/分辨率档位时才填，取值 "512"/"1K"/"2K"/"4K"/"auto" 之一，否则给 null。
 - temperature：用户表达「更随机/更有创意」给偏高值（接近 2），「更精确/更稳定」给偏低值（接近 0），无明确倾向给 1 或 null。
-- parallel_count：用户要「多出几张/多个方案」时给对应数量（1-8）；用户说「每个链接/每个商品生成 N 张」时给 N；否则给 1 或 null。
+- parallel_count：用户要「多出几张/多个方案」时给 2-8，否则给 1 或 null。它表示「同一提示词、同一组参考图」重复出几份变体，不代表「分别处理几张图」。
 - gpt_image_quality：当用户明确要求 GPT Image 2 的质量档位时填 "high"/"medium"/"low"，无明确需求给 "auto" 或 null。
 - gpt_image_style：当用户明确要求鲜明、夸张、强表现力时填 "vivid"；要求自然、写实时填 "natural"；无明确需求给 null。
 - gpt_image_background：用户明确要求透明背景、抠图、无背景时填 "transparent"；明确要求实底/不透明时填 "opaque"；否则给 "auto" 或 null。
@@ -284,13 +269,14 @@ export const AGENT_SYSTEM_INSTRUCTIONS = `你是一个图像生成与编辑助�
 export const AGENT_CDP_SYSTEM_SUFFIX = `
 
 浏览器能力（本机调试浏览器 / CDP）：
-- 通用工具：browser_status、browser_set_port、browser_list_tabs、browser_open_url、browser_read_page、browser_save_images。
+- 通用工具：browser_status、browser_set_port、browser_list_tabs、browser_open_url、browser_read_page、browser_read_taobao、browser_save_images。
 - 用户指定端口时先 browser_set_port。没开调试浏览器时，status / open_url / list_tabs 会自动启动一个独立浏览器（不含日常登录态）。
-- 普通网页用 browser_read_page。淘宝/天猫商品页再用 browser_read_taobao 提炼标题、价格、店铺、SKU、主图和详情图链接。
-- 淘宝/天猫商品页调用 browser_read_taobao 后，主图会自动抓到本地并登记。直接用返回的 img_ 编号做参考图，不要改写或猜测图片 URL。
-- 还需要额外详情图时，把提炼结果里的原始图片 URL 原样交给 browser_save_images，不要改后缀或域名。
-- 图片目录和历史消息里，每张抓来的图都标注了它属于哪个商品（《商品标题》）。用户一次给多个商品链接时，抓完所有商品后，在同一轮里为每个商品分别调用一次 propose_image_action（每个提案的 product_key/product_name 填对应商品，referenced_image_ids 只能引用该商品名下的图，禁止跨商品混用）。系统会把多个提案排队，逐个展示给用户确认，不需要等用户说"继续"。
-- 用户说「每个链接/每个商品生成 N 张」时，每个商品提案的 parallel_count 都填 N；总量按链接数 × N 理解。
+- 普通网页用 browser_read_page 获取内容。需要保存网页图片时，用 browser_save_images 下载图片 URL 列表。
+- 淘宝/天猫商品页优先用 browser_read_taobao：自动提炼标题、店铺、SKU、主图/详情图链接，并把主图抓回登记为会话图片（img_N），无需再手动抓主图；还需要详情图时用 browser_save_images 补充。
+- 用户给商品链接并要求生成/重做图时，先抓取，再基于标题、SKU 和主图给出卖点与构图分析（不涉及价格），把分析结论融入提案 prompt（突出核心卖点、针对性改良构图），不要直接套通用模板。
+- 商品主图的提案 prompt 里，把从标题/SKU 提取的核心卖点**写死为具体画面文案**：一个主标题（产品名/核心卖点）+ 2~4 条简短卖点分行，并明确文案区位置（如左侧/上方）。不要只写"突出卖点"这类抽象要求——文字越具体，出图越不会丢卖点。用户明确说「不要文字/无字」时才省略文案区。
+- 图片目录和历史消息里，每张抓来的图都可能标注了它的来源（如《页面标题》）。若用户一次给多个来源，可为每个来源分别调用一次 propose_image_action（product_key/product_name 填对应来源信息，referenced_image_ids 只引用该来源的图）。系统会把多个提案排队，逐个展示给用户确认。
+- 为商品重新生成/重做图时，把该商品抓回的主图作为参考图，并遵循一致性规则：商品造型、品牌标识与原图保持一致，只优化背景、光线、构图与排版，不重新设计产品。
 - 工具失败时原样转述后端错误，不要总结成「网络连接失败」。`;
 
 // ===== 工具 schema（Responses API 扁平结构）=====
@@ -347,7 +333,7 @@ export const PROPOSE_IMAGE_ACTION_TOOL = {
       },
       parallel_count: {
         type: ['integer', 'null'],
-        description: '建议并行生成数量 1-8，无明确需求给 null',
+        description: '建议并行生成数量 1-8（同一提示词、同一组参考图的变体份数，不用于「分别处理多张图」），无明确需求给 null',
       },
       gpt_image_quality: {
         type: ['string', 'null'],

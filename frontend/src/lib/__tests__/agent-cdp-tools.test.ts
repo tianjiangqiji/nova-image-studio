@@ -19,6 +19,7 @@ vi.mock('@/lib/cdp-client', () => {
     getCdpStatus: vi.fn(),
     setCdpPort: vi.fn(),
     launchDebugBrowser: vi.fn(),
+    purgeCdpProductImages: vi.fn(),
   };
 });
 
@@ -27,6 +28,7 @@ import {
   AGENT_CDP_TOOL_NAMES,
   executeAgentCdpTool,
   isAgentCdpTool,
+  purgeCdpProductImages,
 } from '@/lib/agent-cdp-tools';
 import {
   CdpApiError,
@@ -36,6 +38,7 @@ import {
   launchDebugBrowser,
   listCdpTargets,
   openBrowserTab,
+  purgeCdpProductImages as requestPurgeCdpProductImages,
   readBrowserPage,
   setCdpPort,
 } from '@/lib/cdp-client';
@@ -48,6 +51,7 @@ const mockedGetStatus = vi.mocked(getCdpStatus);
 const mockedSetPort = vi.mocked(setCdpPort);
 const mockedLaunch = vi.mocked(launchDebugBrowser);
 const mockedFetchImages = vi.mocked(fetchPageImages);
+const mockedPurge = vi.mocked(requestPurgeCdpProductImages);
 
 const SAMPLE_PRODUCT = {
   platform: 'taobao' as const,
@@ -88,6 +92,16 @@ describe('executeAgentCdpTool', () => {
     expect(result.text).toContain('targetId=T9');
   });
 
+  it('browser_open_url 复用同 URL 的现有标签页', async () => {
+    mockedListTargets.mockResolvedValue([{ id: 'existing-tab', title: 'Example', url: 'https://example.com/' }]);
+
+    const result = await executeAgentCdpTool('browser_open_url', { url: 'https://example.com/' });
+
+    expect(mockedListTargets).toHaveBeenCalled();
+    expect(mockedOpenTab).not.toHaveBeenCalled();
+    expect(result.text).toContain('targetId=existing-tab');
+  });
+
   it('browser_read_page 返回标题、URL 与正文', async () => {
     mockedReadPage.mockResolvedValue({ title: '标题', url: 'https://example.com/', text: '正文内容' });
     const result = await executeAgentCdpTool('browser_read_page', { targetId: 'T1', maxChars: 5000 });
@@ -110,7 +124,9 @@ describe('executeAgentCdpTool', () => {
     ]);
     expect(result.sourceKey).toBe(SAMPLE_PRODUCT.url);
     expect(result.text).toContain('测试商品');
-    expect(result.text).toContain('¥9.9');
+    // 用户要求提示词不带价格：提炼结果不把价格喂给模型
+    expect(result.text).not.toContain('¥9.9');
+    expect(result.text).not.toContain('价格');
     expect(result.text).toContain('颜色（红/蓝）');
     expect(result.text).toContain('已自动抓取 2 张主图');
   });
@@ -136,5 +152,15 @@ describe('executeAgentCdpTool', () => {
     mockedListTargets.mockRejectedValue(new CdpApiError('浏览器不可达', 'CDP_UNREACHABLE'));
     const result = await executeAgentCdpTool('browser_list_tabs', {});
     expect(result.text).toContain('浏览器不可达');
+  });
+
+  it('purgeCdpProductImages 只提交 CDP 落盘路径', async () => {
+    mockedPurge.mockResolvedValue(1);
+    const deleted = await purgeCdpProductImages([
+      '/api/nova/cdp/products/p_aaaaaaaaaaaaaaaa_1.jpg',
+      'https://img.alicdn.com/bao/uploaded/i1.jpg',
+    ]);
+    expect(mockedPurge).toHaveBeenCalledWith(['/api/nova/cdp/products/p_aaaaaaaaaaaaaaaa_1.jpg']);
+    expect(deleted).toBe(1);
   });
 });

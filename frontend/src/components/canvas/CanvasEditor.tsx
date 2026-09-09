@@ -47,6 +47,7 @@ import {
   type CanvasMediaOption,
 } from "./components/canvas-video-config-section";
 import { isMediaStorageKey, resolveMediaUrl, storeCanvasMedia } from "./lib/media-storage";
+import { cleanupUnusedCanvasStorage } from "./lib/canvas-storage-gc";
 import { describeRejections, getAcceptAttribute, isAcceptedFile, selectFiles, type MediaKind } from "@/lib/plugin-media-config";
 import {
   getPluginRegistryServerSnapshot,
@@ -668,34 +669,36 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         clearUploadProgress(id);
         if (nodes.find((node) => node.id === id)?.type === CanvasNodeType.Config) clearPendingMedia(id);
       }
-      setNodes((prev) =>
-        prev
-          .filter((node) => !idSet.has(node.id))
-          .map((node) => {
-            // 剩余编排节点上指向被删节点的帧引用/素材引用都是死引用，一并清除（保留其余字段）
-            if (node.type !== CanvasNodeType.Config) return node;
-            const frameRefs = node.metadata?.videoFrameRefs;
-            const mediaRefs = node.metadata?.videoMediaRefs;
-            const frameStale = frameRefs && Object.values(frameRefs).some((refId) => refId && idSet.has(refId));
-            const mediaStale = mediaRefs && Object.values(mediaRefs).some((ids) => ids?.some((refId) => idSet.has(refId)));
-            if (!frameStale && !mediaStale) return node;
-            const nextFrameRefs = { ...(frameRefs ?? {}) };
-            for (const [slot, refId] of Object.entries(nextFrameRefs)) {
-              if (refId && idSet.has(refId)) delete nextFrameRefs[slot];
-            }
-            const nextMediaRefs: Record<string, string[]> = {};
-            for (const [slot, ids] of Object.entries(mediaRefs ?? {})) {
-              const kept = (ids ?? []).filter((refId) => !idSet.has(refId));
-              if (kept.length) nextMediaRefs[slot] = kept;
-            }
-            return { ...node, metadata: { ...node.metadata, videoFrameRefs: nextFrameRefs, videoMediaRefs: nextMediaRefs } };
-          }),
-      );
-      setConnections((prev) => prev.filter((connection) => !idSet.has(connection.fromNodeId) && !idSet.has(connection.toNodeId)));
+      const nextNodes = nodes
+        .filter((node) => !idSet.has(node.id))
+        .map((node) => {
+          // 剩余编排节点上指向被删节点的帧引用/素材引用都是死引用，一并清除（保留其余字段）
+          if (node.type !== CanvasNodeType.Config) return node;
+          const frameRefs = node.metadata?.videoFrameRefs;
+          const mediaRefs = node.metadata?.videoMediaRefs;
+          const frameStale = frameRefs && Object.values(frameRefs).some((refId) => refId && idSet.has(refId));
+          const mediaStale = mediaRefs && Object.values(mediaRefs).some((ids) => ids?.some((refId) => idSet.has(refId)));
+          if (!frameStale && !mediaStale) return node;
+          const nextFrameRefs = { ...(frameRefs ?? {}) };
+          for (const [slot, refId] of Object.entries(nextFrameRefs)) {
+            if (refId && idSet.has(refId)) delete nextFrameRefs[slot];
+          }
+          const nextMediaRefs: Record<string, string[]> = {};
+          for (const [slot, ids] of Object.entries(mediaRefs ?? {})) {
+            const kept = (ids ?? []).filter((refId) => !idSet.has(refId));
+            if (kept.length) nextMediaRefs[slot] = kept;
+          }
+          return { ...node, metadata: { ...node.metadata, videoFrameRefs: nextFrameRefs, videoMediaRefs: nextMediaRefs } };
+        });
+      const nextConnections = connections.filter((connection) => !idSet.has(connection.fromNodeId) && !idSet.has(connection.toNodeId));
+      setNodes(nextNodes);
+      setConnections(nextConnections);
+      const projectsWithCurrentState = useCanvasStore.getState().projects.map((item) => item.id === projectId ? { ...item, nodes: nextNodes, connections: nextConnections } : item);
+      void cleanupUnusedCanvasStorage([...projectsWithCurrentState, { nodes, connections }, ...undoStack]);
       setSelectedConnectionId(null);
       setSelectedIds((prev) => prev.filter((id) => !idSet.has(id)));
     },
-    [nodes, pushHistory],
+    [connections, nodes, projectId, pushHistory, undoStack],
   );
 
   const pasteClipboardAt = useCallback((position: Position) => {

@@ -55,7 +55,7 @@ async function stopBackend(child) {
   }
 }
 
-function startBackend(t, extraEnv = {}) {
+function startBackend(t, extraEnv = {}, prepare) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-cdp-routes-'));
   const childEnv = {
     ...process.env,
@@ -69,6 +69,7 @@ function startBackend(t, extraEnv = {}) {
   for (const [key, value] of Object.entries(extraEnv)) {
     if (value === undefined) delete childEnv[key];
   }
+  prepare?.(tempDir);
   const child = spawn(process.execPath, [path.join(BACKEND_DIR, 'server.js')], {
     cwd: tempDir,
     env: childEnv,
@@ -121,6 +122,60 @@ function runLoopbackHelper(address) {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
+
+test('cdp 启动清理删除过期 gif 商品素材', { timeout: 60000 }, async t => {
+  const backendPort = await findFreePort();
+  const { child, tempDir, getOutput } = startBackend(t, {
+    PORT: String(backendPort),
+    NOVA_CDP_ENABLED: 'true',
+  }, dir => {
+    const cdpDir = path.join(dir, 'cdp-products');
+    fs.mkdirSync(cdpDir, { recursive: true });
+    const oldTime = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+    const gifPath = path.join(cdpDir, 'expired.gif');
+    fs.writeFileSync(gifPath, 'gif');
+    fs.utimesSync(gifPath, oldTime, oldTime);
+  });
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  await waitBackendReady(child, backendUrl, getOutput);
+
+  assert.equal(fs.existsSync(path.join(tempDir, 'cdp-products', 'expired.gif')), false);
+});
+
+test('cdp 路由：gif 商品素材返回 image/gif', { timeout: 60000 }, async t => {
+  const backendPort = await findFreePort();
+  const { child, getOutput } = startBackend(t, {
+    PORT: String(backendPort),
+    NOVA_CDP_ENABLED: 'true',
+  }, dir => {
+    const cdpDir = path.join(dir, 'cdp-products');
+    fs.mkdirSync(cdpDir, { recursive: true });
+    fs.writeFileSync(path.join(cdpDir, 'fresh.gif'), 'gif');
+  });
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  await waitBackendReady(child, backendUrl, getOutput);
+
+  const response = await fetch(`${backendUrl}/api/nova/cdp/products/fresh.gif`);
+  assert.equal(response.status, 200, getOutput());
+  assert.equal(response.headers.get('content-type'), 'image/gif');
+});
+
+test('cdp 配置显式记录非回环 NOVA_CDP_HOST 被限制为回环地址', { timeout: 60000 }, async t => {
+  const backendPort = await findFreePort();
+  const { child, getOutput } = startBackend(t, {
+    PORT: String(backendPort),
+    NOVA_CDP_ENABLED: 'true',
+    NOVA_CDP_HOST: '192.168.1.5',
+  });
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  await waitBackendReady(child, backendUrl, getOutput);
+
+  const response = await fetch(`${backendUrl}/api/nova/cdp/config`);
+  assert.equal(response.status, 200, getOutput());
+  const body = await response.json();
+  assert.equal(body.host, '127.0.0.1');
+  assert.match(getOutput(), /NOVA_CDP_HOST.*127\.0\.0\.1/);
+});
 
 test('cdp 路由：未显式开启时默认关闭', { timeout: 60000 }, async t => {
   const backendPort = await findFreePort();
@@ -305,4 +360,290 @@ test('cdp 路由：NOVA_CDP_ENABLED=false 时全部 404', { timeout: 60000 }, as
 
   const statusResponse = await fetch(`${backendUrl}/api/nova/cdp/status`);
   assert.equal(statusResponse.status, 404);
+});
+
+async function waitHttpReady(port, timeoutMs = 3000) {
+  await waitFor(async () => {
+    await new Promise((resolve, reject) => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/', timeout: 400, family: 4 }, res => {
+        res.resume();
+        resolve();
+      });
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('timeout'));
+      });
+      req.on('error', reject);
+    });
+    return true;
+  }, timeoutMs);
+}
+
+async function startHttpStub(t, handler) {
+  const server = http.createServer(handler);
+  const port = await listen(server);
+  await waitHttpReady(port);
+  t.after(() => close(server));
+  return { port, server };
+}
+
+function startFakeCdp(t, version = {
+  Browser: 'Chrome/131.0.6778.140',
+  'Protocol-Version': '1.3',
+}, targets = []) {
+  const requests = [];
+  return startHttpStub(t, (req, res) => {
+    requests.push(req.url);
+    if (req.url === '/json/version') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(version));
+      return;
+    }
+    if (req.url === '/json/list') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(targets));
+      return;
+    }
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('not chrome');
+  }).then(result => ({ ...result, requests }));
+}
+
+function startPlainHttpStub(t) {
+  return startHttpStub(t, (_req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('hello from ordinary service');
+  });
+}
+
+function createFakeChrome(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-fake-chrome-'));
+  const markerPath = path.join(dir, 'spawned');
+  const executable = path.join(dir, 'fake-chrome');
+  fs.writeFileSync(executable, '#!/bin/sh\nprintf "spawned %s\\n" "$*" > "$NOVA_SPAWN_MARKER"\n');
+  fs.chmodSync(executable, 0o755);
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  return { executable, markerPath };
+}
+
+test('cdp 路由：open 复用同 URL 的现有标签页', { timeout: 60000 }, async t => {
+  const backendPort = await findFreePort();
+  const pageUrl = 'https://example.com/existing';
+  const fakeCdp = await startFakeCdp(t, undefined, [{
+    id: 'existing-tab',
+    type: 'page',
+    title: 'Example',
+    url: pageUrl,
+  }]);
+  const { child, getOutput } = startBackend(t, {
+    PORT: String(backendPort),
+    NOVA_CDP_PORT: String(fakeCdp.port),
+    NOVA_CDP_ENABLED: 'true',
+  });
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  await waitBackendReady(child, backendUrl, getOutput);
+
+  const response = await fetch(`${backendUrl}/api/nova/cdp/open`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url: pageUrl }),
+  });
+
+  assert.equal(response.status, 200, getOutput());
+  assert.deepEqual(await response.json(), { targetId: 'existing-tab', url: pageUrl, reused: true });
+  assert.equal(fakeCdp.requests.includes('/json/new'), false);
+});
+
+test('cdp 路由：config 允许接入已被有效 CDP 占用的端口', { timeout: 60000 }, async t => {
+  const backendPort = await findFreePort();
+  const idlePort = await findFreePort();
+  const fakeCdp = await startFakeCdp(t);
+  const { child, getOutput } = startBackend(t, {
+    PORT: String(backendPort),
+    NOVA_CDP_PORT: String(idlePort),
+    NOVA_CDP_ENABLED: 'true',
+  });
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  await waitBackendReady(child, backendUrl, getOutput);
+
+  const configResponse = await fetch(`${backendUrl}/api/nova/cdp/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ port: fakeCdp.port }),
+  });
+  assert.equal(configResponse.status, 200, getOutput());
+  const configBody = await configResponse.json();
+  assert.equal(configBody.port, fakeCdp.port);
+  assert.equal(configBody.reachable, true);
+  assert.match(String(configBody.browser || ''), /Chrome/);
+
+  const statusResponse = await fetch(`${backendUrl}/api/nova/cdp/status`);
+  assert.equal(statusResponse.status, 200);
+  const statusBody = await statusResponse.json();
+  assert.equal(statusBody.port, fakeCdp.port);
+  assert.equal(statusBody.reachable, true);
+});
+
+test('cdp 路由：config 拒绝被普通 HTTP 服务占用的端口', { timeout: 60000 }, async t => {
+  const backendPort = await findFreePort();
+  const idlePort = await findFreePort();
+  const ordinary = await startPlainHttpStub(t);
+  const { child, getOutput } = startBackend(t, {
+    PORT: String(backendPort),
+    NOVA_CDP_PORT: String(idlePort),
+    NOVA_CDP_ENABLED: 'true',
+  });
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  await waitBackendReady(child, backendUrl, getOutput);
+
+  const configResponse = await fetch(`${backendUrl}/api/nova/cdp/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ port: ordinary.port }),
+  });
+  assert.equal(configResponse.status, 409, getOutput());
+  const configBody = await configResponse.json();
+  assert.equal(configBody.code, 'PORT_IN_USE');
+
+  const statusResponse = await fetch(`${backendUrl}/api/nova/cdp/status`);
+  const statusBody = await statusResponse.json();
+  assert.equal(statusBody.port, idlePort);
+});
+
+test('cdp 路由：config 在环境变量已指向有效 CDP 端口时允许保存', { timeout: 60000 }, async t => {
+  const backendPort = await findFreePort();
+  const fakeCdp = await startFakeCdp(t);
+  const { child, getOutput } = startBackend(t, {
+    PORT: String(backendPort),
+    NOVA_CDP_PORT: String(fakeCdp.port),
+    NOVA_CDP_ENABLED: 'true',
+  });
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  await waitBackendReady(child, backendUrl, getOutput);
+
+  const configResponse = await fetch(`${backendUrl}/api/nova/cdp/config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ port: fakeCdp.port }),
+  });
+  assert.equal(configResponse.status, 200, getOutput());
+  const configBody = await configResponse.json();
+  assert.equal(configBody.port, fakeCdp.port);
+  assert.equal(configBody.reachable, true);
+  assert.match(String(configBody.browser || ''), /Chrome/);
+});
+
+test('cdp 路由：launch 对已有有效 CDP 复用且不 spawn', { timeout: 60000 }, async t => {
+  const backendPort = await findFreePort();
+  const fakeCdp = await startFakeCdp(t);
+  const fakeChrome = createFakeChrome(t);
+  const { child, getOutput } = startBackend(t, {
+    PORT: String(backendPort),
+    NOVA_CDP_PORT: String(fakeCdp.port),
+    NOVA_CDP_ENABLED: 'true',
+    NOVA_CHROME_PATH: fakeChrome.executable,
+    NOVA_SPAWN_MARKER: fakeChrome.markerPath,
+  });
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  await waitBackendReady(child, backendUrl, getOutput);
+
+  const launchResponse = await fetch(`${backendUrl}/api/nova/cdp/launch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(launchResponse.status, 200, getOutput());
+  const launchBody = await launchResponse.json();
+  assert.equal(launchBody.ok, true);
+  assert.equal(launchBody.port, fakeCdp.port);
+  assert.match(String(launchBody.message || ''), /已连接|现有|复用|已有/);
+  assert.equal(fs.existsSync(fakeChrome.markerPath), false, `不应 spawn 浏览器：${getOutput()}`);
+});
+
+test('cdp 路由：launch 对非 CDP 占用端口返回 PORT_IN_USE 且不 spawn', { timeout: 60000 }, async t => {
+  const backendPort = await findFreePort();
+  const ordinary = await startPlainHttpStub(t);
+  const fakeChrome = createFakeChrome(t);
+  const { child, getOutput } = startBackend(t, {
+    PORT: String(backendPort),
+    NOVA_CDP_PORT: String(ordinary.port),
+    NOVA_CDP_ENABLED: 'true',
+    NOVA_CHROME_PATH: fakeChrome.executable,
+    NOVA_SPAWN_MARKER: fakeChrome.markerPath,
+  });
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  await waitBackendReady(child, backendUrl, getOutput);
+
+  const launchResponse = await fetch(`${backendUrl}/api/nova/cdp/launch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  assert.equal(launchResponse.status, 409, getOutput());
+  const launchBody = await launchResponse.json();
+  assert.equal(launchBody.code, 'PORT_IN_USE');
+  assert.equal(fs.existsSync(fakeChrome.markerPath), false, `不应 spawn 浏览器：${getOutput()}`);
+});
+
+test('cdp 路由：fetch-image 对已抓过的 URL 直接复用落盘文件，不访问浏览器', { timeout: 60000 }, async t => {
+  const backendPort = await findFreePort();
+  const { child, tempDir, getOutput } = startBackend(t, {
+    PORT: String(backendPort),
+    NOVA_CDP_ENABLED: 'true',
+    NOVA_CDP_PORT: '1', // 无浏览器：复用生效时全程不应访问调试端口
+  });
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  await waitBackendReady(child, backendUrl, getOutput);
+
+  const imageUrl = 'https://img.alicdn.com/imgextra/i1/4097062355/test-photo.png';
+  const urlHash = require('node:crypto').createHash('sha1').update(imageUrl).digest('hex').slice(0, 16);
+  const cdpDir = path.join(tempDir, 'cdp-products');
+  fs.mkdirSync(cdpDir, { recursive: true });
+  const seeded = `p_${urlHash}_123.jpg`;
+  fs.writeFileSync(path.join(cdpDir, seeded), Buffer.from('fake-jpeg'));
+
+  const response = await fetch(`${backendUrl}/api/nova/cdp/fetch-image`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ targetId: 'irrelevant', url: imageUrl }),
+  });
+  assert.equal(response.status, 200, getOutput());
+  const payload = await response.json();
+  assert.equal(payload.localUrl, `/api/nova/cdp/products/${seeded}`);
+  assert.deepEqual(fs.readdirSync(cdpDir), [seeded], '复用不得产生新文件');
+});
+
+test('cdp 路由：purge-images 只删除 CDP 目录内合法文件名', { timeout: 60000 }, async t => {
+  const backendPort = await findFreePort();
+  const { child, tempDir, getOutput } = startBackend(t, {
+    PORT: String(backendPort),
+    NOVA_CDP_ENABLED: 'true',
+  }, dir => {
+    const cdpDir = path.join(dir, 'cdp-products');
+    fs.mkdirSync(cdpDir, { recursive: true });
+    fs.writeFileSync(path.join(cdpDir, 'p_aaaaaaaaaaaaaaaa_1.jpg'), 'keep-me-not');
+    fs.writeFileSync(path.join(cdpDir, 'p_bbbbbbbbbbbbbbbb_2.png'), 'keep');
+    fs.writeFileSync(path.join(cdpDir, 'outside.txt'), 'nope');
+  });
+  const backendUrl = `http://127.0.0.1:${backendPort}`;
+  await waitBackendReady(child, backendUrl, getOutput);
+
+  const response = await fetch(`${backendUrl}/api/nova/cdp/purge-images`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      files: [
+        '/api/nova/cdp/products/p_aaaaaaaaaaaaaaaa_1.jpg',
+        '../outside.txt',
+        'p_bbbbbbbbbbbbbbbb_2.png',
+      ],
+    }),
+  });
+  assert.equal(response.status, 200, getOutput());
+  const payload = await response.json();
+  assert.equal(payload.deleted, 2, getOutput());
+  const cdpDir = path.join(tempDir, 'cdp-products');
+  assert.equal(fs.existsSync(path.join(cdpDir, 'p_aaaaaaaaaaaaaaaa_1.jpg')), false);
+  assert.equal(fs.existsSync(path.join(cdpDir, 'p_bbbbbbbbbbbbbbbb_2.png')), false);
+  assert.equal(fs.existsSync(path.join(cdpDir, 'outside.txt')), true);
 });

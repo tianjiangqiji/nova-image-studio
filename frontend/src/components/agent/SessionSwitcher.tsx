@@ -1,8 +1,8 @@
 'use client';
 
-import { useMemo, useState, type FormEvent } from 'react';
-import { Check, ChevronDown, Pencil, Plus, Trash2 } from 'lucide-react';
-import { Button, buttonVariants } from '@/components/ui/button';
+import { useState, type FormEvent } from 'react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -11,15 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { deleteAgentSessionDatabase } from '@/lib/agent-context-store';
 import {
@@ -36,21 +27,15 @@ interface SessionSwitcherProps {
   onSessionChange: (sessionId: string) => void | Promise<void>;
 }
 
-type NameDialogMode = 'create' | 'rename' | null;
+type NameDialogState = { mode: 'create' } | { mode: 'rename'; session: AgentSession } | null;
 
 export function SessionSwitcher({ activeSessionId, onSessionChange }: SessionSwitcherProps) {
   const [sessions, setSessions] = useState<AgentSession[]>(() => listAgentSessions());
-  const [nameDialogMode, setNameDialogMode] = useState<NameDialogMode>(null);
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [nameDialog, setNameDialog] = useState<NameDialogState>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AgentSession | null>(null);
   const [nameDraft, setNameDraft] = useState('');
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  const activeSession = useMemo(
-    () => sessions.find(session => session.id === activeSessionId)
-      || { id: activeSessionId, name: '当前会话' },
-    [activeSessionId, sessions],
-  );
 
   const refreshSessions = () => setSessions(listAgentSessions());
 
@@ -65,27 +50,32 @@ export function SessionSwitcher({ activeSessionId, onSessionChange }: SessionSwi
     }
   };
 
-  const openNameDialog = (mode: Exclude<NameDialogMode, null>) => {
-    setNameDraft(mode === 'rename' ? activeSession.name : '');
-    setNameDialogMode(mode);
+  const openCreateDialog = () => {
+    setNameDraft('');
+    setNameDialog({ mode: 'create' });
+  };
+
+  const openRenameDialog = (session: AgentSession) => {
+    setNameDraft(session.name);
+    setNameDialog({ mode: 'rename', session });
   };
 
   const handleNameSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const name = nameDraft.trim();
-    if (!name || !nameDialogMode || busy) return;
+    if (!name || !nameDialog || busy) return;
 
     setBusy(true);
     try {
-      if (nameDialogMode === 'create') {
+      if (nameDialog.mode === 'create') {
         const session = createAgentSession(name);
         refreshSessions();
-        setNameDialogMode(null);
+        setNameDialog(null);
         await onSessionChange(session.id);
       } else {
-        renameAgentSession(activeSessionId, name);
+        renameAgentSession(nameDialog.session.id, name);
         refreshSessions();
-        setNameDialogMode(null);
+        setNameDialog(null);
       }
     } finally {
       setBusy(false);
@@ -93,22 +83,24 @@ export function SessionSwitcher({ activeSessionId, onSessionChange }: SessionSwi
   };
 
   const handleDelete = async () => {
-    const oldId = activeSessionId;
-    if (oldId === 'default' || busy) return;
+    const target = deleteTarget;
+    if (!target || target.id === 'default' || busy) return;
 
     setDeleteError(null);
     setBusy(true);
     let switchedToDefault = false;
     try {
-      await onSessionChange('default');
-      switchedToDefault = true;
-      await deleteAgentSessionDatabase(oldId);
-      deleteAgentSession(oldId);
+      if (target.id === activeSessionId) {
+        await onSessionChange('default');
+        switchedToDefault = true;
+      }
+      await deleteAgentSessionDatabase(target.id);
+      deleteAgentSession(target.id);
       refreshSessions();
-      setDeleteDialogOpen(false);
+      setDeleteTarget(null);
     } catch {
       if (switchedToDefault) {
-        try { await onSessionChange(oldId); } catch { /* keep the deletion error visible */ }
+        try { await onSessionChange(target.id); } catch { /* keep the deletion error visible */ }
       }
       setDeleteError('删除会话失败，请重试。');
     } finally {
@@ -118,70 +110,91 @@ export function SessionSwitcher({ activeSessionId, onSessionChange }: SessionSwi
 
   return (
     <>
-      <DropdownMenu modal={false}>
-        <DropdownMenuTrigger
-          className={cn(
-            buttonVariants({ variant: 'outline', size: 'sm' }),
-            'max-w-56 justify-between gap-2',
-          )}
-          aria-label="切换 Agent 会话"
-          title="切换 Agent 会话"
-          disabled={busy}
-        >
-          <span className="truncate">{activeSession.name}</span>
-          <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="min-w-52">
-          <DropdownMenuGroup>
-            <DropdownMenuLabel>Agent 会话</DropdownMenuLabel>
-            {sessions.map(session => (
-              <DropdownMenuItem
+      <aside
+        aria-label="Agent 会话"
+        className="flex w-52 shrink-0 flex-col self-stretch rounded-2xl border border-border bg-card/60"
+      >
+        <div className="flex items-center justify-between border-b border-border px-3 py-2">
+          <span className="text-sm font-medium">会话</span>
+          <span className="text-xs text-muted-foreground">{sessions.length}</span>
+        </div>
+        <div className="border-b border-border p-2">
+          <Button
+            type="button"
+            size="sm"
+            className="w-full justify-start gap-2"
+            onClick={openCreateDialog}
+            disabled={busy}
+          >
+            <Plus className="size-4" />
+            新建会话
+          </Button>
+        </div>
+        <div className="flex-1 space-y-0.5 overflow-y-auto p-2">
+          {sessions.map(session => {
+            const isActive = session.id === activeSessionId;
+            return (
+              <div
                 key={session.id}
-                disabled={session.id === activeSessionId || busy}
-                onClick={() => void handleSessionChange(session.id)}
+                className={cn(
+                  'flex items-center gap-1 rounded-lg px-1.5 py-1',
+                  isActive ? 'bg-accent' : 'hover:bg-muted/60',
+                )}
               >
-                <Check className={cn('size-4', session.id !== activeSessionId && 'opacity-0')} />
-                <span className="min-w-0 flex-1 truncate">{session.name}</span>
-              </DropdownMenuItem>
-            ))}
-          </DropdownMenuGroup>
-          <DropdownMenuSeparator />
-          <DropdownMenuGroup>
-            <DropdownMenuItem disabled={busy} onClick={() => openNameDialog('create')}>
-              <Plus />
-              新建会话
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={busy} onClick={() => openNameDialog('rename')}>
-              <Pencil />
-              重命名会话
-            </DropdownMenuItem>
-            {activeSessionId !== 'default' && (
-              <DropdownMenuItem
-                variant="destructive"
-                disabled={busy}
-                onClick={() => {
-                  setDeleteError(null);
-                  setDeleteDialogOpen(true);
-                }}
-              >
-                <Trash2 />
-                删除会话
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuGroup>
-        </DropdownMenuContent>
-      </DropdownMenu>
+                <button
+                  type="button"
+                  aria-current={isActive ? 'true' : undefined}
+                  disabled={busy || isActive}
+                  onClick={() => void handleSessionChange(session.id)}
+                  className={cn(
+                    'min-w-0 flex-1 truncate rounded px-1 py-0.5 text-left text-sm',
+                    isActive ? 'font-medium' : 'text-muted-foreground',
+                  )}
+                  title={session.name}
+                >
+                  {session.name}
+                </button>
+                <button
+                  type="button"
+                  aria-label={`重命名会话 ${session.name}`}
+                  title="重命名"
+                  disabled={busy}
+                  onClick={() => openRenameDialog(session)}
+                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-40"
+                >
+                  <Pencil className="size-3.5" />
+                </button>
+                {session.id !== 'default' && (
+                  <button
+                    type="button"
+                    aria-label={`删除会话 ${session.name}`}
+                    title="删除"
+                    disabled={busy}
+                    onClick={() => {
+                      setDeleteError(null);
+                      setDeleteTarget(session);
+                    }}
+                    className="shrink-0 rounded p-1 text-muted-foreground hover:bg-background hover:text-destructive disabled:opacity-40"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </aside>
 
       <Dialog
-        open={nameDialogMode !== null}
+        open={nameDialog !== null}
         onOpenChange={open => {
-          if (!open && !busy) setNameDialogMode(null);
+          if (!open && !busy) setNameDialog(null);
         }}
       >
         <DialogContent className="sm:max-w-sm">
           <form onSubmit={event => void handleNameSubmit(event)}>
             <DialogHeader>
-              <DialogTitle>{nameDialogMode === 'create' ? '新建会话' : '重命名会话'}</DialogTitle>
+              <DialogTitle>{nameDialog?.mode === 'create' ? '新建会话' : '重命名会话'}</DialogTitle>
               <DialogDescription>
                 会话记录分别保存在本机，仅当前会话会载入 Agent。
               </DialogDescription>
@@ -197,11 +210,11 @@ export function SessionSwitcher({ activeSessionId, onSessionChange }: SessionSwi
               />
             </label>
             <DialogFooter className="mt-4">
-              <Button type="button" variant="outline" onClick={() => setNameDialogMode(null)} disabled={busy}>
+              <Button type="button" variant="outline" onClick={() => setNameDialog(null)} disabled={busy}>
                 取消
               </Button>
               <Button type="submit" disabled={!nameDraft.trim() || busy}>
-                {nameDialogMode === 'create' ? '创建' : '保存'}
+                {nameDialog?.mode === 'create' ? '创建' : '保存'}
               </Button>
             </DialogFooter>
           </form>
@@ -209,16 +222,16 @@ export function SessionSwitcher({ activeSessionId, onSessionChange }: SessionSwi
       </Dialog>
 
       <Dialog
-        open={deleteDialogOpen}
+        open={deleteTarget !== null}
         onOpenChange={open => {
-          if (!busy) setDeleteDialogOpen(open);
+          if (!busy && !open) setDeleteTarget(null);
         }}
       >
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>删除会话</DialogTitle>
             <DialogDescription>
-              确定删除{activeSession.name}吗？该会话的聊天记录和图片将从本机清除，且无法恢复。
+              确定删除{deleteTarget?.name}吗？该会话的聊天记录和图片将从本机清除，且无法恢复。
             </DialogDescription>
             {deleteError && (
               <p role="alert" className="text-sm text-destructive">
@@ -227,7 +240,7 @@ export function SessionSwitcher({ activeSessionId, onSessionChange }: SessionSwi
             )}
           </DialogHeader>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={busy}>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)} disabled={busy}>
               取消
             </Button>
             <Button variant="destructive" onClick={() => void handleDelete()} disabled={busy}>

@@ -42,7 +42,7 @@ import {
   type ParallelCount,
 } from '@/lib/model-capabilities';
 import {
-  alignAgentPromptAspectRatio,
+  stripAgentPromptBatchLanguage,
   normalizeProductKey,
   scopeAgentProposal,
   type AgentImageRecord,
@@ -131,7 +131,7 @@ export function AgentProposalCard({
   ).slice(0, Math.max(0, maxRefs));
   const [selectedIds, setSelectedIds] = useState<string[]>(initialSelectedIds);
   const [layout, setLayout] = useState<AgentApproveParams>(() => resolveCardLayout(imageModel, scopedProposal));
-  const [prompt, setPrompt] = useState(() => alignAgentPromptAspectRatio(scopedProposal.prompt, layout.aspectRatio));
+  const [prompt, setPrompt] = useState(() => stripAgentPromptBatchLanguage(scopedProposal.prompt));
   const [modelPopoverOpen, setModelPopoverOpen] = useState(false);
   const [sizePopoverOpen, setSizePopoverOpen] = useState(false);
   const [aspectPopoverOpen, setAspectPopoverOpen] = useState(false);
@@ -608,7 +608,13 @@ export function AgentProposalCard({
             <X className="h-3.5 w-3.5" />
             取消
           </Button>
-          <Button size="sm" onClick={handleApprove} disabled={busy || overLimit || prompt.trim().length === 0} className="gap-1">
+          <Button
+            size="sm"
+            data-agent-approve=""
+            onClick={handleApprove}
+            disabled={busy || overLimit || prompt.trim().length === 0}
+            className="gap-1"
+          >
             <Check className="h-3.5 w-3.5" />
             {failed ? '重试生成' : '允许并生成'}
           </Button>

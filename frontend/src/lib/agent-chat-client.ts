@@ -7,6 +7,8 @@ import {
   AGENT_CDP_SYSTEM_SUFFIX,
   AGENT_IMAGE_DESCRIBE_PROMPT,
   PROPOSE_IMAGE_ACTION_TOOL,
+  extractProductLinks,
+  normalizeProductKey,
   type AgentMessage,
   type AgentProposal,
   type AgentActionType,
@@ -218,6 +220,27 @@ function normalizeAction(value: unknown): AgentActionType {
   return value === 'edit' ? 'edit' : 'generate';
 }
 
+const AGENT_MAX_PARALLEL_COUNT = 8;
+const AGENT_RATIO_WORD_MAP: Record<string, string> = {
+  正方形: '1:1',
+  // 方向词映射必须与 system 指令（agent-chat-config.ts）一致：横屏=16:9、竖屏=9:16，
+  // 否则模型按指令填 16:9/9:16 而兜底找 4:3/3:4，会重复补提案。
+  竖版: '9:16',
+  竖屏: '9:16',
+  横版: '16:9',
+  横屏: '16:9',
+};
+
+function canonicalizeAspectRatio(raw?: string): string | undefined {
+  const value = (raw || '').trim().replace(/：/g, ':');
+  if (!value) return undefined;
+  return AGENT_RATIO_WORD_MAP[value] || value;
+}
+
+function clampParallelCount(count: number): number {
+  return Math.min(AGENT_MAX_PARALLEL_COUNT, Math.max(1, Math.floor(count)));
+}
+
 function parseProposalArguments(raw: string): AgentProposal | null {
   if (!raw || raw.trim().length === 0) return null;
   try {
@@ -231,7 +254,7 @@ function parseProposalArguments(raw: string): AgentProposal | null {
     if (prompt.trim().length === 0) return null;
 
     const requestedAspectRatio = typeof parsed.requested_aspect_ratio === 'string' && parsed.requested_aspect_ratio.trim().length > 0
-      ? parsed.requested_aspect_ratio.trim()
+      ? canonicalizeAspectRatio(parsed.requested_aspect_ratio)
       : undefined;
     const suggestedAspectRatio = typeof parsed.suggested_aspect_ratio === 'string' && parsed.suggested_aspect_ratio.trim().length > 0
       ? parsed.suggested_aspect_ratio.trim()
@@ -295,7 +318,7 @@ export function streamAgentChat(
 
   const promise = (async () => {
     try {
-      await runAgentStreamWithRetry(baseUrl, input, callbacks, controller.signal);
+      await runAgentStream(baseUrl, input, callbacks, controller.signal);
     } catch (err) {
       if (controller.signal.aborted) return;
       callbacks.onError(normalizeStreamError(err));
@@ -306,33 +329,6 @@ export function streamAgentChat(
     abort: () => controller.abort(),
     promise,
   };
-}
-
-async function runAgentStreamWithRetry(
-  baseUrl: string,
-  input: StreamAgentInput,
-  callbacks: StreamAgentCallbacks,
-  signal: AbortSignal,
-): Promise<void> {
-  let lastError: Error | null = null;
-  for (let attempt = 1; attempt <= AGENT_GPT_REQUEST_MAX_ATTEMPTS; attempt++) {
-    if (signal.aborted) return;
-    try {
-      // 超时只包单轮模型流，不包整段工具循环：打开淘宝页 + 抓图经常超过 45 秒。
-      await runAgentStream(baseUrl, input, callbacks, signal);
-      return;
-    } catch (err) {
-      if (signal.aborted) return;
-      const normalized = normalizeStreamError(err);
-      lastError = normalized;
-      if (attempt >= AGENT_GPT_REQUEST_MAX_ATTEMPTS || !isRetryableAgentError(err)) {
-        throw normalized;
-      }
-      callbacks.onResetAttempt?.();
-      callbacks.onRetry?.(attempt + 1, AGENT_GPT_REQUEST_MAX_ATTEMPTS, normalized);
-    }
-  }
-  throw lastError || new Error('模型请求失败');
 }
 
 // ===== 多轮工具循环 =====
@@ -497,16 +493,255 @@ async function runAgentStream(
       if (!duplicated) pendingProposals.push(item);
     }
   };
+
+  // 用户消息里的「N 张 + 比例」需求清单（如「2 张 1:1 + 5 张 3:4」或
+  // 「一张 1:1 一张 3:4」）。模型可能漏掉其中某些比例（如只出 3:4 忘了 1:1）
+  // ——代码层兜底补齐，克隆最近一份提案的 prompt/参考图，只改比例。
+  // 已有提案的数量按用户明确说的张数纠正，上限 8。
+  // 按从句/转折边界切分后再看否定；「能不能/可不可以/用不用/要不要」是正向能力问句。
+  const RATIO_WORDS = '(?:1:1|3:4|9:16|16:9|2:3|3:2|4:5|5:4|4:3|1:4|4:1|1:8|8:1|21:9|正方形|竖版|竖屏|横版|横屏)';
+  const CHINESE_COUNT_WORDS = '[零〇一二两三四五六七八九十百千万亿]+';
+  const COUNT_TOKEN = `(?:\\d+|${CHINESE_COUNT_WORDS})`;
+  const ABILITY_QUESTION_PATTERN = /能\s*不能|可\s*不可以|可以\s*不可以|用\s*不用|要\s*不要/g;
+  const CLAUSE_SPLIT_PATTERN = /[，。；\n,、]|但/;
+  const NEGATION_TOKEN_PATTERN = /不要|不用|禁止|严禁|避免|无需|无须|不能|不可|不需要|(?<![特分个差性级类识告区鉴派组离])别/g;
+  const SEGMENT_RATIO_PATTERN = new RegExp(
+    `每张\\s*(${RATIO_WORDS})|(${COUNT_TOKEN})\\s*张(?:(?!${COUNT_TOKEN}\\s*张).)*?(${RATIO_WORDS})|(${COUNT_TOKEN})\\s*张|(?:要|出|做|用|生成)\\s*(${RATIO_WORDS})`,
+    'g',
+  );
+  const CHINESE_COUNT_DIGITS: Record<string, number> = {
+    零: 0,
+    〇: 0,
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+  };
+  const CHINESE_COUNT_UNITS: Record<string, number> = {
+    十: 10,
+    百: 100,
+    千: 1000,
+    万: 10000,
+    亿: 100000000,
+  };
+  const parseRequestedCount = (raw?: string): number => {
+    const value = raw?.trim() || '';
+    if (/^\d+$/.test(value)) return Number.parseInt(value, 10);
+    let total = 0;
+    let section = 0;
+    let number = 0;
+    for (const char of value) {
+      const digit = CHINESE_COUNT_DIGITS[char];
+      if (digit !== undefined) {
+        number = digit;
+        continue;
+      }
+      const unit = CHINESE_COUNT_UNITS[char];
+      if (unit === undefined) continue;
+      if (unit < 10000) {
+        section += (number || 1) * unit;
+      } else {
+        section = (section + number) || 1;
+        total += section * unit;
+        section = 0;
+      }
+      number = 0;
+    }
+    return total + section + number;
+  };
+  const isContinuationText = (text: string): boolean => /^(?:继续|再来|接着|下一个|下一张)[\s，,。.!！]*$/u.test(text.trim());
+  const getRatioRequestText = (history: AgentMessage[]): string => {
+    const userTexts = history.filter(message => message.role === 'user').map(message => message.text || '');
+    const latest = userTexts[userTexts.length - 1] || '';
+    if (!isContinuationText(latest)) return latest;
+    return [...userTexts].reverse().find(text => !isContinuationText(text)) || '';
+  };
+  const extractRequestedRatios = (history: AgentMessage[]): { ratio: string; count: number }[] => {
+    const requestText = getRatioRequestText(history)
+      .replace(/：/g, ':')
+      .replace(ABILITY_QUESTION_PATTERN, '');
+    const items: { ratio: string; count: number }[] = [];
+    const addItem = (raw: string | undefined, parsedCount: number) => {
+      const ratio = canonicalizeAspectRatio(raw);
+      if (!ratio || !Number.isFinite(parsedCount) || parsedCount < 1) return;
+      const count = clampParallelCount(parsedCount);
+      const existing = items.find(item => item.ratio === ratio);
+      if (existing) existing.count = Math.max(existing.count, count);
+      else items.push({ ratio, count });
+    };
+    let pendingEachCount: number | undefined;
+    for (const clause of requestText.split(CLAUSE_SPLIT_PATTERN)) {
+      if (!clause.trim()) continue;
+      const segments: Array<{ text: string; negated: boolean }> = [];
+      let cursor = 0;
+      let negated = false;
+      const negationRe = new RegExp(NEGATION_TOKEN_PATTERN.source, 'g');
+      let negationMatch: RegExpExecArray | null;
+      while ((negationMatch = negationRe.exec(clause)) !== null) {
+        if (negationMatch.index > cursor) {
+          segments.push({ text: clause.slice(cursor, negationMatch.index), negated });
+        }
+        negated = true;
+        cursor = negationMatch.index + negationMatch[0].length;
+      }
+      if (cursor < clause.length || segments.length === 0) {
+        segments.push({ text: clause.slice(cursor), negated });
+      }
+      for (const segment of segments) {
+        if (!segment.text.trim()) continue;
+        SEGMENT_RATIO_PATTERN.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = SEGMENT_RATIO_PATTERN.exec(segment.text)) !== null) {
+          if (match[1]) {
+            if (!segment.negated) addItem(match[1], pendingEachCount ?? 1);
+            continue;
+          }
+          if (match[2] && match[3]) {
+            if (!segment.negated) addItem(match[3], parseRequestedCount(match[2]));
+            continue;
+          }
+          if (match[4]) {
+            const parsedCount = parseRequestedCount(match[4]);
+            if (!segment.negated && Number.isFinite(parsedCount) && parsedCount >= 1) {
+              pendingEachCount = clampParallelCount(parsedCount);
+            }
+            continue;
+          }
+          if (match[5] && !segment.negated) addItem(match[5], 1);
+        }
+      }
+    }
+    return items;
+  };
+  const hasMultipleSources = () => {
+    const productKeys = new Set(pendingProposals.map(proposal => normalizeProductKey(proposal.productKey)).filter(Boolean));
+    const productNames = new Set(pendingProposals.map(proposal => proposal.productName?.trim()).filter(Boolean));
+    if (productKeys.size > 1 || productNames.size > 1) return true;
+    return extractProductLinks(getRatioRequestText(input.history)).length > 1;
+  };
+  // ——多图分别处理兜底：用户点名「图1和图2都/分别处理」时，模型常只出一个提案、或把多张
+  // 被修改图塞进同一提案，导致每次生成都拿到全部参考图（输出拼接/雷同）。这里把被点名的图
+  // 拆成每图一个独立提案（refs 只含自己、count=1）。意图层由系统提示词教模型，这里是合同层兜底。
+  const SEPARATE_CUE_PATTERN = /都|分别|各自|每张/;
+  const MENTION_PATTERN = /图\s*(\d+)/g;
+  const ensureSeparateImageEdits = () => {
+    if (pendingProposals.length === 0) return;
+    const requestText = getRatioRequestText(input.history);
+    if (!requestText) return;
+    const catalogIds = new Set(input.catalog.map(entry => entry.imgId));
+    // 按子句收集被点名的图：同一子句要有「都/分别/各」类提示词，且该子句未被否定
+    const mentioned: string[] = [];
+    for (const clause of requestText.split(CLAUSE_SPLIT_PATTERN)) {
+      if (!SEPARATE_CUE_PATTERN.test(clause)) continue;
+      if (new RegExp(NEGATION_TOKEN_PATTERN.source).test(clause)) continue;
+      MENTION_PATTERN.lastIndex = 0;
+      let m: RegExpExecArray | null;
+      while ((m = MENTION_PATTERN.exec(clause)) !== null) {
+        const id = `img_${m[1]}`;
+        if (catalogIds.has(id) && !mentioned.includes(id)) mentioned.push(id);
+      }
+    }
+    if (mentioned.length < 2) return;
+    const mentionedSet = new Set(mentioned);
+    // 单参考图提案里的「图N」一律归一为「图1」；先折叠「图1和图2」这类连举，避免变成「图1和图1」
+    const renumber = (prompt: string) => prompt
+      .replace(/图\s*\d+(?:\s*[和与、,，]\s*图\s*\d+)+/g, '图1')
+      .replace(/图\s*\d+/g, '图1');
+    const singles = new Map<string, AgentProposal>();
+    const passthrough: AgentProposal[] = [];
+    for (const proposal of pendingProposals) {
+      const hits = proposal.referencedImageIds.filter(id => mentionedSet.has(id));
+      if (proposal.action === 'edit' && hits.length >= 2) {
+        // 多张被点名图塞进同一提案 → 拆成每图一个独立提案
+        for (const id of hits) {
+          if (!singles.has(id)) {
+            singles.set(id, {
+              ...proposal,
+              referencedImageIds: [id],
+              parallelCount: 1,
+              prompt: renumber(proposal.prompt),
+            });
+          }
+        }
+      } else if (proposal.action === 'edit' && proposal.referencedImageIds.length === 1 && hits.length === 1) {
+        if (!singles.has(hits[0])) singles.set(hits[0], proposal);
+      } else {
+        passthrough.push(proposal);
+      }
+    }
+    if (singles.size === 0) return; // 模型完全没为被点名图出 edit 提案，不凭空发明
+    const template = singles.get(mentioned.find(id => singles.has(id)) as string) as AgentProposal;
+    // 按用户点名顺序输出；被点名但无提案覆盖的图，克隆单参考图提案补齐
+    const ordered: AgentProposal[] = [];
+    for (const id of mentioned) {
+      const existing = singles.get(id);
+      if (existing) {
+        ordered.push(existing);
+      } else {
+        ordered.push({
+          ...template,
+          referencedImageIds: [id],
+          parallelCount: 1,
+          prompt: renumber(template.prompt),
+          reason: `补足用户点名处理的 ${id}`,
+        });
+      }
+    }
+    pendingProposals.splice(0, pendingProposals.length, ...passthrough, ...ordered);
+  };
+  const ensureRequestedRatios = () => {
+    const required = extractRequestedRatios(input.history);
+    if (required.length === 0 || pendingProposals.length === 0) return;
+    for (const proposal of pendingProposals) {
+      const canonical = canonicalizeAspectRatio(proposal.requestedAspectRatio);
+      if (canonical) proposal.requestedAspectRatio = canonical;
+      const wanted = required.find(item => item.ratio === canonical);
+      if (wanted) proposal.parallelCount = wanted.count;
+    }
+    if (hasMultipleSources()) return;
+    const existing = new Set(pendingProposals.map(p => p.requestedAspectRatio).filter(Boolean));
+    const missing = required.filter(item => !existing.has(item.ratio));
+    if (missing.length === 0) return;
+    const base = pendingProposals[pendingProposals.length - 1];
+    for (const { ratio, count } of missing) {
+      // 只按用户明确说的数量补，禁止克隆 base 的 parallel_count（否则「2 张 1:1 +
+      // 5 张 3:4」模型只提 3:4 时会补出 5 张 1:1，超量生成）。
+      // prompt 保持模型原文：比例只走参数。仅当模型自己写了 base 比例文字时替换成新比例，不自造。
+      const baseRatio = base.requestedAspectRatio?.trim();
+      const prompt = baseRatio && base.prompt.includes(baseRatio)
+        ? base.prompt.split(baseRatio).join(ratio)
+        : base.prompt;
+      pendingProposals.push({
+        ...base,
+        prompt,
+        requestedAspectRatio: ratio,
+        parallelCount: count,
+        reason: `补足用户要求的 ${count} 张 ${ratio} 比例`,
+      });
+    }
+  };
   if (cdpEnabled) {
     callbacks.onToolActivity?.('正在连接模型，准备调用浏览器工具…\n');
   }
   for (let round = 0; ; round++) {
     if (signal.aborted) return;
     const body = buildAgentRequestBody(input.protocol, model, conversation, instructions, enableNativeWebSearch, cdpEnabled);
-    const roundResult = await runAttemptWithTimeout(
-      attemptSignal => streamAgentRound(baseUrl, input, body, callbacks, attemptSignal),
+    // 超时/网络错误只重试当前模型流，不重跑已经执行过的浏览器工具。
+    const roundResult = await runAgentRequestWithRetry(
+      (attemptSignal, resetIdle) => streamAgentRound(baseUrl, input, body, callbacks, attemptSignal, resetIdle),
       signal,
       AGENT_CHAT_ATTEMPT_TIMEOUT_MS,
+      {
+        idle: true,
+        onRetry: callbacks.onRetry,
+        onResetAttempt: callbacks.onResetAttempt,
+      },
     );
 
     // 跨轮文本拼接：中间轮的过渡语（如「我先打开这个链接看看」）与最终答复都展示
@@ -538,6 +773,8 @@ async function runAgentStream(
     }
 
     if (pendingProposals.length > 0) {
+      ensureSeparateImageEdits();
+      ensureRequestedRatios();
       callbacks.onDone(accumulated, pendingProposals[0], pendingProposals);
       return;
     }
@@ -556,6 +793,7 @@ async function streamAgentRound(
   body: Record<string, unknown>,
   callbacks: StreamAgentCallbacks,
   signal: AbortSignal,
+  resetIdle?: () => void,
 ): Promise<RoundResult> {
   const response = await fetch('/api/nova/proxy/text', {
     method: 'POST',
@@ -582,6 +820,7 @@ async function streamAgentRound(
   const toolCalls = new Map<string, CapturedToolCall>();
 
   await readSseStream(response.body, signal, (event) => {
+    resetIdle?.();
     if (!event.data) return;
     if (event.data === '[DONE]') {
       return;
@@ -677,7 +916,6 @@ function buildAgentRequestBody(
     return {
       model,
       stream: true,
-      reasoning_effort: 'high' as const,
       messages: conversation.kind === 'chat' ? conversation.messages : [],
       tools: [
         {
@@ -1062,40 +1300,53 @@ function createAttemptSignal(parentSignal?: AbortSignal): {
   };
 }
 
+type AgentAttemptRequest<T> = (signal: AbortSignal, resetIdle: () => void) => Promise<T>;
+
 async function runAttemptWithTimeout<T>(
-  request: (signal: AbortSignal) => Promise<T>,
+  request: AgentAttemptRequest<T>,
   parentSignal: AbortSignal | undefined,
   timeoutMs: number,
+  idle = false,
 ): Promise<T> {
   const attempt = createAttemptSignal(parentSignal);
   const timeoutError = new AgentRequestTimeoutError(timeoutMs);
-  const timeoutId = window.setTimeout(() => {
-    if (!attempt.signal.aborted) attempt.abort(timeoutError);
-  }, timeoutMs);
-
+  let timeoutId: number | undefined;
+  let rejectTimeout: ((error: Error) => void) | undefined;
+  const armTimeout = () => {
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+    timeoutId = window.setTimeout(() => {
+      if (!attempt.signal.aborted) attempt.abort(timeoutError);
+      rejectTimeout?.(timeoutError);
+    }, timeoutMs);
+  };
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    rejectTimeout = reject;
+    armTimeout();
+  });
   try {
-    return await request(attempt.signal);
+    return await Promise.race([request(attempt.signal, idle ? armTimeout : () => undefined), timeoutPromise]);
   } catch (err) {
-    if (attempt.signal.reason instanceof AgentRequestTimeoutError) {
-      throw attempt.signal.reason;
+    if (attempt.signal.reason instanceof AgentRequestTimeoutError || err instanceof AgentRequestTimeoutError) {
+      throw timeoutError;
     }
     throw err;
   } finally {
-    window.clearTimeout(timeoutId);
+    if (timeoutId !== undefined) window.clearTimeout(timeoutId);
     attempt.cleanup();
   }
 }
 
 async function runAgentRequestWithRetry<T>(
-  request: (signal: AbortSignal) => Promise<T>,
+  request: AgentAttemptRequest<T>,
   signal: AbortSignal | undefined,
   timeoutMs: number,
+  retryHooks?: Pick<StreamAgentCallbacks, 'onRetry' | 'onResetAttempt'> & { idle?: boolean },
 ): Promise<T> {
   let lastError: Error | null = null;
   for (let attempt = 1; attempt <= AGENT_GPT_REQUEST_MAX_ATTEMPTS; attempt++) {
     if (signal?.aborted) throw new DOMException('已取消', 'AbortError');
     try {
-      return await runAttemptWithTimeout(request, signal, timeoutMs);
+      return await runAttemptWithTimeout(request, signal, timeoutMs, retryHooks?.idle === true);
     } catch (err) {
       if (signal?.aborted) throw err;
       const normalized = normalizeStreamError(err);
@@ -1103,6 +1354,8 @@ async function runAgentRequestWithRetry<T>(
       if (attempt >= AGENT_GPT_REQUEST_MAX_ATTEMPTS || !isRetryableAgentError(err)) {
         throw normalized;
       }
+      retryHooks?.onResetAttempt?.();
+      retryHooks?.onRetry?.(attempt + 1, AGENT_GPT_REQUEST_MAX_ATTEMPTS, normalized);
     }
   }
   throw lastError || new Error('模型请求失败');

@@ -162,6 +162,9 @@ export function collectLiveBlobKeys(
     if (asset.transparentBlobKey) keys.add(asset.transparentBlobKey);
     if (asset.aiTransparentBlobKey) keys.add(asset.aiTransparentBlobKey);
     if (asset.repairBlobKey) keys.add(asset.repairBlobKey);
+    for (const snapshot of Object.values(asset.processSnapshots ?? {})) {
+      if (snapshot?.currentBlobKey) keys.add(snapshot.currentBlobKey);
+    }
   };
 
   if (draft.sourceImageBlobKey) keys.add(draft.sourceImageBlobKey);
@@ -195,6 +198,7 @@ async function gcOrphanBlobs(
         asset.transparentBlobKey,
         asset.aiTransparentBlobKey,
         asset.repairBlobKey,
+        ...Object.values(asset.processSnapshots ?? {}).map((snapshot) => snapshot?.currentBlobKey),
       ]) {
         if (key && !live.has(key)) candidates.add(key);
       }
