@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, Copy, Maximize, RectangleHorizontal, Sparkles, Thermometer } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
@@ -17,9 +17,11 @@ import {
   getSizeOptions,
   getSupportsTemperature,
   normalizeCustomImageSize,
+  sanitizeLayoutForModel,
   supportsAutoLayout,
   supportsCustomSize,
   supportsGptImageAdvancedParams,
+  PARALLEL_COUNT_VALUES,
   type GptImageAdvancedParams,
   type ParallelCount,
 } from '@/lib/model-capabilities';
@@ -56,6 +58,14 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
   const [temperaturePopoverOpen, setTemperaturePopoverOpen] = useState(false);
   const [customSizeDialogOpen, setCustomSizeDialogOpen] = useState(false);
 
+  useEffect(() => () => {
+    setModelPopoverOpen(false);
+    setSizePopoverOpen(false);
+    setAspectPopoverOpen(false);
+    setParallelPopoverOpen(false);
+    setTemperaturePopoverOpen(false);
+  }, []);
+
   const model = value.model;
   const sizeOptions = getSizeOptions(model);
   const aspectRatioOptions = getAspectRatioOptions(model, value.outputSize);
@@ -69,12 +79,17 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
   const displaySizeLabel = value.customSize || getOutputSizeLabel(value.outputSize);
   const handleModelChange = (newModel: ModelId) => {
     const nextGpt = getGptImageAdvancedParamsForModel(newModel, value.gptImageAdvancedParams);
-    const nextSizeOptions = getSizeOptions(newModel);
-    const nextOutputSize: OutputSize = value.outputSize === 'auto' && supportsAutoLayout(newModel) ? 'auto' : (nextSizeOptions.find(s => s.value === value.outputSize)?.value || nextSizeOptions[0].value);
-    const nextCustomSize = supportsCustomSize(newModel) ? normalizeCustomImageSize(value.customSize, getCustomSizeMaxSide(newModel)) : undefined;
-    const aspectOptions = getAspectRatioOptions(newModel, nextOutputSize);
-    const nextAspectRatio: AspectRatio = aspectOptions.find(a => a.value === value.aspectRatio) ? value.aspectRatio : (aspectOptions[0]?.value || '1:1');
-    onChange({ model: newModel, outputSize: nextOutputSize, customSize: nextCustomSize, aspectRatio: nextAspectRatio, gptImageAdvancedParams: nextGpt });
+    const sanitized = sanitizeLayoutForModel(newModel, value.outputSize, value.aspectRatio);
+    const nextCustomSize = supportsCustomSize(newModel) && sanitized.outputSize !== 'auto'
+      ? normalizeCustomImageSize(value.customSize, getCustomSizeMaxSide(newModel))
+      : undefined;
+    onChange({
+      model: newModel,
+      outputSize: sanitized.outputSize,
+      customSize: nextCustomSize,
+      aspectRatio: sanitized.aspectRatio,
+      gptImageAdvancedParams: nextGpt,
+    });
   };
 
   const handleSizeChange = (newSize: OutputSize) => {
@@ -107,7 +122,7 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
   return (
     <div className={cn('flex flex-wrap items-center gap-1.5', className)}>
       {/* 模型选择 */}
-      <Popover open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
+      <Popover modal={false} open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
         <PopoverTrigger className={cn(buttonVariants({ variant: 'outline', size }), 'gap-1')} title="模型选择">
           <Sparkles className="h-3 w-3" />
           <span className="shrink-0 truncate text-[11px]">{MODEL_OPTIONS.find(o => o.value === model)?.label}</span>
@@ -118,7 +133,7 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
               key={option.value}
               onClick={() => {
                 handleModelChange(option.value);
-                setModelPopoverOpen(false);
+                setTimeout(() => setModelPopoverOpen(false), 0);
               }}
               className={cn('w-full text-left px-2.5 py-1.5 rounded-md text-sm hover:bg-muted', model === option.value && 'bg-muted font-medium')}
             >
@@ -198,7 +213,7 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
           <span className="text-[11px]">x{value.parallelCount}</span>
         </PopoverTrigger>
         <PopoverContent className="w-36 p-1" align="start">
-          {[1, 2, 3, 4].map((count) => (
+          {PARALLEL_COUNT_VALUES.map((count) => (
             <button
               key={count}
               onClick={() => handleParallelCountChange(count as ParallelCount)}

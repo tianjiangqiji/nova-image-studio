@@ -30,6 +30,7 @@ import {
   getGptImageAdvancedParamsForModel,
   normalizeCustomImageSize,
   resolveAgentLayout,
+  sanitizeLayoutForModel,
   supportsGptImageAdvancedParams,
   supportsAutoLayout,
   supportsCustomSize,
@@ -37,9 +38,16 @@ import {
   type GptImageBackground,
   type GptImageQuality,
   type GptImageStyle,
+  PARALLEL_COUNT_VALUES,
   type ParallelCount,
 } from '@/lib/model-capabilities';
-import type { AgentImageRecord, AgentProposal } from '@/lib/agent-chat-config';
+import {
+  stripAgentPromptBatchLanguage,
+  normalizeProductKey,
+  scopeAgentProposal,
+  type AgentImageRecord,
+  type AgentProposal,
+} from '@/lib/agent-chat-config';
 
 export interface AgentApproveParams {
   outputSize: OutputSize;
@@ -58,12 +66,42 @@ interface AgentProposalCardProps {
   imageModel: ModelId;
   busy?: boolean;
   hideControls?: boolean;
+  failed?: boolean;
   onModelChange: (model: ModelId) => void;
   onApprove: (prompt: string, selectedImageIds: string[], model: ModelId, params: AgentApproveParams) => void;
   onCancel: () => void;
 }
 
-const PARALLEL_OPTIONS: ParallelCount[] = [1, 2, 3, 4];
+const PARALLEL_OPTIONS: ParallelCount[] = PARALLEL_COUNT_VALUES;
+
+function resolveCardLayout(
+  imageModel: ModelId,
+  proposal: AgentProposal,
+  refDims?: { width?: number; height?: number },
+): AgentApproveParams {
+  const resolved = resolveAgentLayout(imageModel, {
+    requestedAspectRatio: proposal.requestedAspectRatio,
+    suggestedAspectRatio: proposal.suggestedAspectRatio,
+    requestedOutputSize: proposal.requestedOutputSize,
+    temperature: proposal.temperature,
+    parallelCount: proposal.parallelCount,
+  }, refDims);
+  const sanitized = sanitizeLayoutForModel(imageModel, resolved.outputSize, resolved.aspectRatio);
+  const advancedParams = getGptImageAdvancedParamsForModel(imageModel, {
+    quality: proposal.gptImageQuality,
+    style: proposal.gptImageStyle,
+    background: proposal.gptImageBackground,
+  });
+  return {
+    ...resolved,
+    outputSize: sanitized.outputSize,
+    aspectRatio: sanitized.aspectRatio,
+    customSize: sanitized.outputSize === 'auto' ? undefined : resolved.customSize,
+    gptImageQuality: advancedParams.quality,
+    gptImageStyle: advancedParams.style,
+    gptImageBackground: advancedParams.background,
+  };
+}
 
 export function AgentProposalCard({
   proposal,
@@ -71,15 +109,29 @@ export function AgentProposalCard({
   imageModel,
   busy = false,
   hideControls = false,
+  failed = false,
   onModelChange,
   onApprove,
   onCancel,
 }: AgentProposalCardProps) {
+  const scopedProposal = useMemo(() => scopeAgentProposal(proposal, images), [proposal, images]);
+  const scopedImages = useMemo(() => {
+    if (scopedProposal.productKey) {
+      return images.filter(img => normalizeProductKey(img.productKey) === scopedProposal.productKey);
+    }
+    const hasProductScopes = images.some(img => Boolean(img.productKey));
+    return hasProductScopes ? images.filter(img => !img.productKey) : images;
+  }, [images, scopedProposal.productKey]);
   const maxRefs = getModelMaxRefImages(imageModel);
-  const [prompt, setPrompt] = useState(proposal.prompt);
-  const [selectedIds, setSelectedIds] = useState<string[]>(() =>
-    proposal.referencedImageIds.filter(id => images.some(img => img.imgId === id)).slice(0, Math.max(0, maxRefs))
-  );
+  const initialSelectedIds = (
+    scopedProposal.productKey
+      // 商品提案默认使用该商品抓到的全部图片；模型上限只负责截断，不再依赖 LLM 逐张列 ID
+      ? [...scopedImages].sort((a, b) => a.createdAt - b.createdAt).map(img => img.imgId)
+      : scopedProposal.referencedImageIds.filter(id => scopedImages.some(img => img.imgId === id))
+  ).slice(0, Math.max(0, maxRefs));
+  const [selectedIds, setSelectedIds] = useState<string[]>(initialSelectedIds);
+  const [layout, setLayout] = useState<AgentApproveParams>(() => resolveCardLayout(imageModel, scopedProposal));
+  const [prompt, setPrompt] = useState(() => stripAgentPromptBatchLanguage(scopedProposal.prompt));
   const [modelPopoverOpen, setModelPopoverOpen] = useState(false);
   const [sizePopoverOpen, setSizePopoverOpen] = useState(false);
   const [aspectPopoverOpen, setAspectPopoverOpen] = useState(false);
@@ -87,7 +139,15 @@ export function AgentProposalCard({
   const [parallelPopoverOpen, setParallelPopoverOpen] = useState(false);
   const [customSizeDialogOpen, setCustomSizeDialogOpen] = useState(false);
 
-  const imageMap = useMemo(() => new Map(images.map(img => [img.imgId, img])), [images]);
+  useEffect(() => () => {
+    setModelPopoverOpen(false);
+    setSizePopoverOpen(false);
+    setAspectPopoverOpen(false);
+    setTempPopoverOpen(false);
+    setParallelPopoverOpen(false);
+  }, []);
+
+  const imageMap = useMemo(() => new Map(scopedImages.map(img => [img.imgId, img])), [scopedImages]);
 
   // 首张选中参考图的真实像素，用于优先级 2（上传图分辨率）
   const firstRefDims = useMemo(() => {
@@ -96,28 +156,6 @@ export function AgentProposalCard({
     const rec = imageMap.get(firstId);
     return rec?.width && rec?.height ? { width: rec.width, height: rec.height } : undefined;
   }, [selectedIds, imageMap]);
-
-  // 初始布局：按「用户语言 > 上传图分辨率 > Agent 智能」优先级预填并合法化
-  const [layout, setLayout] = useState<AgentApproveParams>(() => {
-    const resolved = resolveAgentLayout(imageModel, {
-      requestedAspectRatio: proposal.requestedAspectRatio,
-      suggestedAspectRatio: proposal.suggestedAspectRatio,
-      requestedOutputSize: proposal.requestedOutputSize,
-      temperature: proposal.temperature,
-      parallelCount: proposal.parallelCount,
-    }, undefined);
-    const advancedParams = getGptImageAdvancedParamsForModel(imageModel, {
-      quality: proposal.gptImageQuality,
-      style: proposal.gptImageStyle,
-      background: proposal.gptImageBackground,
-    });
-    return {
-      ...resolved,
-      gptImageQuality: advancedParams.quality,
-      gptImageStyle: advancedParams.style,
-      gptImageBackground: advancedParams.background,
-    };
-  });
 
   // 提案首次出现且尚未手动选过参考图时，用首张参考图维度重算一次预填
   const [initializedWithRef, setInitializedWithRef] = useState(false);
@@ -132,6 +170,7 @@ export function AgentProposalCard({
         temperature: proposal.temperature,
         parallelCount: proposal.parallelCount,
       }, firstRefDims);
+      const sanitized = sanitizeLayoutForModel(imageModel, resolved.outputSize, resolved.aspectRatio);
       const advancedParams = getGptImageAdvancedParamsForModel(imageModel, {
         quality: proposal.gptImageQuality,
         style: proposal.gptImageStyle,
@@ -139,6 +178,9 @@ export function AgentProposalCard({
       });
       setLayout(prev => ({
         ...resolved,
+        outputSize: sanitized.outputSize,
+        aspectRatio: sanitized.aspectRatio,
+        customSize: sanitized.outputSize === 'auto' ? undefined : resolved.customSize,
         gptImageQuality: advancedParams.quality,
         gptImageStyle: advancedParams.style,
         gptImageBackground: advancedParams.background,
@@ -154,8 +196,8 @@ export function AgentProposalCard({
   const overLimit = selectedIds.length > maxRefs;
 
   const orderedImages = useMemo(
-    () => [...images].sort((a, b) => b.createdAt - a.createdAt),
-    [images]
+    () => [...scopedImages].sort((a, b) => b.createdAt - a.createdAt),
+    [scopedImages]
   );
 
   // 各项控件的显示条件（只渲染该模型支持的项）
@@ -182,33 +224,19 @@ export function AgentProposalCard({
     onModelChange(next);
     // 重新合法化当前布局：档位 snap、比例 snap、自定义尺寸按支持情况保留/清除
     setLayout((prev) => {
-      const validSizes = getValidOutputSizes(next);
-      const nextSize: OutputSize = validSizes.includes(prev.outputSize) ? prev.outputSize : validSizes[0];
+      const sanitized = sanitizeLayoutForModel(next, prev.outputSize, prev.aspectRatio);
       const advanced = getGptImageAdvancedParamsForModel(next, {
         quality: prev.gptImageQuality,
         style: prev.gptImageStyle,
         background: prev.gptImageBackground,
       });
-      if (nextSize === 'auto') {
-        return {
-          outputSize: 'auto',
-          aspectRatio: 'auto',
-          temperature: getSupportsTemperature(next) ? prev.temperature : 1,
-          gptImageQuality: advanced.quality,
-          gptImageStyle: advanced.style,
-          gptImageBackground: advanced.background,
-          parallelCount: prev.parallelCount,
-        };
-      }
-      const validRatios = getAspectRatioOptions(next, nextSize).map((o) => o.value);
-      const nextRatio: AspectRatio = validRatios.includes(prev.aspectRatio) ? prev.aspectRatio : (validRatios[0] || '1:1');
-      const nextCustom = supportsCustomSize(next)
+      const nextCustom = supportsCustomSize(next) && sanitized.outputSize !== 'auto'
         ? normalizeCustomImageSize(prev.customSize, getCustomSizeMaxSide(next))
         : undefined;
       return {
-        outputSize: nextSize,
+        outputSize: sanitized.outputSize,
         customSize: nextCustom,
-        aspectRatio: nextRatio,
+        aspectRatio: sanitized.aspectRatio,
         temperature: getSupportsTemperature(next) ? prev.temperature : 1,
         gptImageQuality: advanced.quality,
         gptImageStyle: advanced.style,
@@ -290,9 +318,11 @@ export function AgentProposalCard({
             effectiveMode === 'edit' ? 'bg-amber-500/15 text-amber-600' : 'bg-primary/15 text-primary'
           )}>
             {effectiveMode === 'edit' ? <Pencil className="h-3 w-3" /> : <Wand2 className="h-3 w-3" />}
-            {effectiveMode === 'edit' ? '编辑图片' : '生成新图'}
+            {effectiveMode === 'edit' ? '参考图生成' : '生成新图'}
           </span>
-          <span className="text-xs text-muted-foreground">等待你确认</span>
+          <span className={cn('text-xs', failed ? 'text-destructive' : 'text-muted-foreground')}>
+            {failed ? '生成失败，可修改后重试' : '等待你确认'}
+          </span>
         </div>
       </div>
 
@@ -368,7 +398,7 @@ export function AgentProposalCard({
 
       {!hideControls && (
       <div className="mb-3 flex flex-wrap items-center gap-1.5">
-        <Popover open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
+        <Popover modal={false} open={modelPopoverOpen} onOpenChange={setModelPopoverOpen}>
           <PopoverTrigger
             disabled={busy}
             className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'gap-1')}
@@ -383,7 +413,7 @@ export function AgentProposalCard({
                 type="button"
                 onClick={() => {
                   handleModelChange(option.value);
-                  setModelPopoverOpen(false);
+                  setTimeout(() => setModelPopoverOpen(false), 0);
                 }}
                 className={cn(
                   'w-full text-left px-2.5 py-1.5 rounded-md text-sm hover:bg-muted',
@@ -578,9 +608,15 @@ export function AgentProposalCard({
             <X className="h-3.5 w-3.5" />
             取消
           </Button>
-          <Button size="sm" onClick={handleApprove} disabled={busy || overLimit || prompt.trim().length === 0} className="gap-1">
+          <Button
+            size="sm"
+            data-agent-approve=""
+            onClick={handleApprove}
+            disabled={busy || overLimit || prompt.trim().length === 0}
+            className="gap-1"
+          >
             <Check className="h-3.5 w-3.5" />
-            {effectiveMode === 'edit' ? '允许并改图' : '允许并生成'}
+            {failed ? '重试生成' : '允许并生成'}
           </Button>
         </div>
       </div>

@@ -152,6 +152,68 @@ describe('submitTextToImage', () => {
     }));
     expect(getJob().serverTaskId).toBe('task-advanced-1');
   });
+
+  it('adapts Gemini auto layout from 淘宝主图3:4 before creating the task', async () => {
+    mockedResolveImageTaskProvider.mockReturnValue({
+      apiKey: 'test-api-key',
+      baseUrl: 'https://example.test',
+      protocol: 'openai',
+      modelId: 'gemini-3.1-flash-image',
+    });
+    saveRegistry({
+      imageModels: [{
+        id: 'gemini-flash',
+        protocol: 'openai',
+        name: 'Gemini Flash',
+        modelId: 'gemini-3.1-flash-image',
+        apiKey: 'test-api-key',
+        baseUrl: 'https://example.test',
+        builtinPreset: 'antigravity-gemini-image',
+        maxRefImages: 3,
+        maxOutputSize: '4K',
+        supportsAdvancedParams: false,
+      }],
+      textModels: [],
+      defaults: {
+        textToImage: 'gemini-flash',
+        imageToImage: 'gemini-flash',
+        reversePrompt: '',
+        agent: '',
+        promptOptimize: '',
+        imageDescribe: '',
+        sliceDecomposition: '',
+        sliceReconstruct: '',
+        sliceImageEdit: '',
+      },
+    });
+    syncDynamicModelExports();
+
+    const job = makeJob({ model: 'gemini-flash' });
+    const { actions } = createActions(job);
+
+    await submitTextToImage({
+      prompts: ['淘宝主图3:4'],
+      outputSize: 'auto',
+      aspectRatio: 'auto',
+      temperature: 1,
+      model: 'gemini-flash',
+      gptImageQuality: 'auto',
+      gptImageStyle: 'auto',
+      gptImageBackground: 'auto',
+      parallelCount: 1,
+    }, actions, vi.fn());
+
+    expect(mockedCreateNovaTask).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: '淘宝主图3:4',
+      outputSize: '1K',
+      aspectRatio: '3:4',
+      model: 'gemini-3.1-flash-image',
+    }));
+    expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
+      output_size: '1K',
+      aspect_ratio: '3:4',
+    }));
+  });
 });
 
 describe('finalizeCompletedServerTask', () => {

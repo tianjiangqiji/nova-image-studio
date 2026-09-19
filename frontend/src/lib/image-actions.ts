@@ -15,6 +15,8 @@ export interface ImageActionPayload {
   file?: File;
   assetId?: string;
   agentImageId?: string;
+  /** Agent 图片所属会话，避免相同 imgId 在不同会话间串读。 */
+  sessionId?: string;
   storedRef?: {
     jobId: string;
     imageRef: string;
@@ -175,7 +177,7 @@ export async function resolveImagePayloadToBlob(payload: ImageActionPayload): Pr
     if (blob) return blob;
   }
   if (payload.agentImageId) {
-    const blob = await getAgentImageBytes(payload.agentImageId);
+    const blob = await getAgentImageBytes(payload.agentImageId, payload.sessionId);
     if (blob) return blob;
   }
   const stored = await resolveStoredRefToBlob(payload);

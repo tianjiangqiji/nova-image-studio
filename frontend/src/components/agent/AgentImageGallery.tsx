@@ -26,6 +26,7 @@ import { createPortal } from 'react-dom';
 
 interface AgentImageGalleryProps {
   images: AgentImageRecord[];
+  sessionId: string;
   /** 重新生成图片描述，传入 imgId 返回新描述文本 */
   onRedescribe?: (imgId: string) => Promise<string>;
 }
@@ -55,7 +56,7 @@ function getAgentImageSourceBadge(source: AgentImageRecord['source']): string {
   return '上传';
 }
 
-export function AgentImageGallery({ images, onRedescribe }: AgentImageGalleryProps) {
+export function AgentImageGallery({ images, sessionId, onRedescribe }: AgentImageGalleryProps) {
   const [open, setOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [previewImages, setPreviewImages] = useState<string[] | null>(null);
@@ -82,7 +83,7 @@ export function AgentImageGallery({ images, onRedescribe }: AgentImageGalleryPro
     setPreviewIndex(clampIndex(startIndex, thumbs.length));
     setPreviewImages(thumbs);
 
-    const blobs = await Promise.all(imgs.map(i => getAgentImageBytes(i.imgId)));
+    const blobs = await Promise.all(imgs.map(i => getAgentImageBytes(i.imgId, sessionId)));
     if (token !== previewTokenRef.current) return;
 
     const objectUrls: string[] = [];
@@ -95,7 +96,7 @@ export function AgentImageGallery({ images, onRedescribe }: AgentImageGalleryPro
     });
     previewObjectUrlsRef.current = objectUrls;
     setPreviewImages(fullSrcs);
-  }, [revokePreviewUrls]);
+  }, [revokePreviewUrls, sessionId]);
 
   const closePreview = useCallback(() => {
     previewTokenRef.current++;
@@ -115,7 +116,8 @@ export function AgentImageGallery({ images, onRedescribe }: AgentImageGalleryPro
     sourceRef: img.imgId,
     prompt: getUsableDescription(img.description) || img.description,
     note: getUsableDescription(img.description),
-  }), []);
+    sessionId,
+  }), [sessionId]);
 
   // 搜索过滤
   const filteredImages = useMemo(() => {
@@ -153,7 +155,7 @@ export function AgentImageGallery({ images, onRedescribe }: AgentImageGalleryPro
       const entries = await Promise.all(
         Array.from(selectedIds).map(async (imgId) => {
           const record = images.find(i => i.imgId === imgId);
-          const blob = await getAgentImageBytes(imgId);
+          const blob = await getAgentImageBytes(imgId, sessionId);
           if (!blob || !record) return null;
           const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
           return { imgId, blob, ext, description: record.description };
@@ -178,7 +180,7 @@ export function AgentImageGallery({ images, onRedescribe }: AgentImageGalleryPro
     } finally {
       setDownloading(false);
     }
-  }, [selectedIds, images]);
+  }, [selectedIds, images, sessionId]);
 
   // 关闭对话框时清空选择
   const handleOpenChange = useCallback((nextOpen: boolean) => {

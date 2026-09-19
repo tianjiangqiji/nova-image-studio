@@ -247,9 +247,16 @@ export async function checkModelsAvailability(
           };
         }
 
-        // 统一通过后端代理使用 /v1/models（NewAPI 兼容）
-        const proxyUrl = `/api/nova/proxy/models?baseUrl=${encodeURIComponent(normalizedBaseUrl)}&apiKey=${encodeURIComponent(model.apiKey)}&protocol=${model.protocol}`;
-        const response = await fetch(proxyUrl, { method: 'GET', cache: 'no-store' });
+        const response = await fetch('/api/nova/proxy/models', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({
+            baseUrl: normalizedBaseUrl,
+            protocol: model.protocol,
+            apiKey: model.apiKey,
+          }),
+        });
         if (!response.ok) {
           const detail = await response.text().catch(() => '');
           return {

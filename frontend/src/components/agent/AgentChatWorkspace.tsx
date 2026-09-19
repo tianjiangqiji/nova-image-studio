@@ -6,6 +6,7 @@ import {
   Bot,
   Brain,
   Check,
+  Chrome,
   CloudUpload,
   Eraser,
   FileText,
@@ -53,12 +54,14 @@ import {
   getValidOutputSizes,
   normalizeCustomImageSize,
   normalizeModel,
+  sanitizeLayoutForModel,
   supportsCustomSize,
   supportsGptImageAdvancedParams,
   type GptImageAdvancedParams,
   type GptImageBackground,
   type GptImageQuality,
   type GptImageStyle,
+  PARALLEL_COUNT_VALUES,
   type ParallelCount,
 } from '@/lib/model-capabilities';
 import { createPortal } from 'react-dom';
@@ -88,6 +91,7 @@ interface AgentParamsSettings {
 }
 
 interface AgentChatWorkspaceProps {
+  activeSessionId: string;
   wideMode?: boolean;
   disabled?: boolean;
   onConfigureApiKey?: () => void;
@@ -103,8 +107,8 @@ function phaseLabel(phase: AgentPhase): string | null {
   }
 }
 
-export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfigureApiKey }: AgentChatWorkspaceProps) {
-  const agent = useAgentChat();
+export function AgentChatWorkspace({ activeSessionId, wideMode = false, disabled = false, onConfigureApiKey }: AgentChatWorkspaceProps) {
+  const agent = useAgentChat(activeSessionId);
   const [uploads, setUploads] = useState<PendingUpload[]>([]);
   const [uploading, setUploading] = useState(false);
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
@@ -177,7 +181,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     })
   );
   const [userParallelCount, setUserParallelCount] = useState<ParallelCount>(
-    [1, 2, 3, 4].includes(savedParams.parallelCount as ParallelCount) ? savedParams.parallelCount as ParallelCount : 1
+    PARALLEL_COUNT_VALUES.includes(savedParams.parallelCount as ParallelCount) ? savedParams.parallelCount as ParallelCount : 1
   );
   const [userCustomSize, setUserCustomSize] = useState<string | undefined>(initialUserCustomSize);
   const [customSizeDialogOpen, setCustomSizeDialogOpen] = useState(false);
@@ -228,11 +232,18 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (!el) return;
+    const approve = el.querySelector('[data-agent-approve]') as HTMLElement | null;
+    if (approve) {
+      approve.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    el.scrollTop = el.scrollHeight;
   }, [agent.messages, agent.streamingText, agent.proposal, agent.phase, agent.generationDraft]);
 
   const busy = agent.phase !== 'idle';
-  const canSend = !busy && !uploading && (hasEditorContent || uploads.length > 0);
+  const interactionDisabled = disabled || !agent.ready;
+  const canSend = agent.ready && !busy && !uploading && (hasEditorContent || uploads.length > 0);
 
   const addPreparedUpload = useCallback((prepared: Awaited<ReturnType<typeof prepareUploadImage>> & Pick<PendingUpload, 'source'>) => {
     const uploadId = prepared.id || generateUUID();
@@ -279,6 +290,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
       setMissingApiKeyDialogOpen(true);
       return;
     }
+    if (disabled || !agent.ready) return;
     if (selectedAssets.length === 0) return;
     setUploading(true);
     try {
@@ -292,7 +304,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     } finally {
       setUploading(false);
     }
-  }, [addPreparedUpload, agent.hasApiKey]);
+  }, [addPreparedUpload, agent.hasApiKey, agent.ready, disabled]);
 
   const applyTextAsset = useCallback((asset: TextAsset) => {
     const editor = editorRef.current;
@@ -333,6 +345,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
       setMissingApiKeyDialogOpen(true);
       return;
     }
+    if (disabled || !agent.ready) return;
     setUploading(true);
     try {
       for (const file of Array.from(fileList)) {
@@ -354,7 +367,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     } finally {
       setUploading(false);
     }
-  }, [agent.hasApiKey]);
+  }, [agent.hasApiKey, agent.ready, disabled]);
 
   /** 接受 File[]（来自粘贴事件），复用 handleFiles 的逻辑 */
   const handleFileArray = useCallback(async (files: File[]) => {
@@ -363,6 +376,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
       setMissingApiKeyDialogOpen(true);
       return;
     }
+    if (disabled || !agent.ready) return;
     setUploading(true);
     try {
       for (const file of files) {
@@ -384,7 +398,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     } finally {
       setUploading(false);
     }
-  }, [agent.hasApiKey]);
+  }, [agent.hasApiKey, agent.ready, disabled]);
 
   // Ctrl+V 粘贴图片
   useEffect(() => {
@@ -408,14 +422,14 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     };
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
-  }, [busy, uploading, handleFileArray]);
+  }, [agent.ready, busy, uploading, handleFileArray, disabled]);
 
   const handleSend = useCallback(() => {
     if (!agent.hasApiKey) {
       setMissingApiKeyDialogOpen(true);
       return;
     }
-    if (!canSend) return;
+    if (interactionDisabled || !canSend) return;
     const editor = editorRef.current;
     if (!editor) return;
     const text = editor.getText();
@@ -425,7 +439,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     setHasEditorContent(false);
     setUploads([]);
     void agent.sendMessage(text, currentUploads, imageRefs);
-  }, [agent, canSend, uploads]);
+  }, [agent, canSend, interactionDisabled, uploads]);
 
   // 编辑器通过内部 onSubmit 回调触发发送
   const handleEditorSubmit = useCallback((text: string, imageRefs: string[]) => {
@@ -433,14 +447,15 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
       setMissingApiKeyDialogOpen(true);
       return;
     }
-    if (!canSend && uploads.length === 0 && text.trim().length === 0) return;
+    if (!agent.ready || busy || uploading) return;
+    if (uploads.length === 0 && text.trim().length === 0) return;
     const currentUploads = uploads;
     const editor = editorRef.current;
     if (editor) editor.clear();
     setHasEditorContent(false);
     setUploads([]);
     void agent.sendMessage(text, currentUploads, imageRefs);
-  }, [agent, canSend, uploads]);
+  }, [agent, busy, uploading, uploads]);
 
   // 提示词优化
   const [optimizeOpen, setOptimizeOpen] = useState(false);
@@ -559,7 +574,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
     <div
       ref={containerRef}
       className={cn(
-        'relative flex h-full flex-1 min-h-[400px] flex-col rounded-2xl border border-border bg-card/60',
+        'relative flex h-full min-w-0 flex-1 min-h-[400px] flex-col rounded-2xl border border-border bg-card/60 overflow-hidden',
         wideMode && 'h-full min-h-0 w-full'
       )}
       onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
@@ -587,7 +602,11 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             <Eraser className="h-3.5 w-3.5" />
             清理上下文
           </Button>
-          <AgentImageGallery images={agent.images} onRedescribe={agent.redescribeImage} />
+          <AgentImageGallery
+            images={agent.images}
+            sessionId={activeSessionId}
+            onRedescribe={agent.redescribeImage}
+          />
           <Button
             variant="ghost"
             size="xs"
@@ -603,7 +622,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
 
       <div
         ref={scrollRef}
-        className="flex-1 space-y-4 overflow-y-auto px-4 py-4"
+        className="min-w-0 flex-1 space-y-4 overflow-x-hidden overflow-y-auto px-4 py-4"
       >
         {agent.messages.length === 0 && !agent.streamingText && (
           <div className="flex h-full flex-col items-center justify-center gap-2 text-center text-muted-foreground">
@@ -618,16 +637,19 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             key={message.id}
             message={message}
             imageMap={imageMap}
+            sessionId={activeSessionId}
             onWithdraw={agent.withdrawTurn}
+            messageActionsDisabled={agent.messageActionsDisabled}
             onReedit={agent.reeditProposal}
+            reeditDisabled={agent.phase !== 'idle'}
             onCopy={() => {
               navigator.clipboard.writeText(message.text).catch(() => {});
               showToast('已复制到剪贴板', 'success');
             }}
-            onDelete={() => setDeleteConfirmMsgId(message.id)}
-            onRollback={() => setRollbackConfirmMsgId(message.id)}
+            onDelete={agent.messageActionsDisabled ? undefined : () => setDeleteConfirmMsgId(message.id)}
+            onRollback={agent.messageActionsDisabled ? undefined : () => setRollbackConfirmMsgId(message.id)}
             onRetry={
-              message.id === agent.retryableMessageId && agent.phase === 'idle'
+              message.id === agent.retryableMessageId && agent.phase === 'idle' && !agent.messageActionsDisabled
                 ? () => setRetryConfirmMsgId(message.id)
                 : undefined
             }
@@ -635,20 +657,22 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
           />
         ))}
 
-        {(agent.streamingText || agent.streamingReasoning) && (
+        {(agent.phase === 'streaming' || agent.streamingText || agent.streamingReasoning) && (
           <div className="flex gap-2.5">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
               <Bot className="h-4 w-4" />
             </div>
             <div className="flex max-w-[80%] flex-col gap-2">
-              {agent.streamingReasoning && (
+              {(agent.streamingReasoning || (agent.phase === 'streaming' && !agent.streamingText)) && (
                 <div className="rounded-xl border border-border/60 bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
                   <div className="mb-1 flex items-center gap-1.5 font-medium">
                     <Brain className="h-3.5 w-3.5" />
                     思考中
                   </div>
                   <div className="leading-relaxed opacity-90">
-                    <div dangerouslySetInnerHTML={{ __html: renderReasoning(agent.streamingReasoning) }} />
+                    {agent.streamingReasoning
+                      ? <div dangerouslySetInnerHTML={{ __html: renderReasoning(agent.streamingReasoning) }} />
+                      : '正在连接模型…'}
                   </div>
                 </div>
               )}
@@ -670,19 +694,24 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
 
         {agent.proposal && agent.phase === 'proposal' && (
           <AgentProposalCard
+            // key 必须随提案变化：队列推进（取消当前提案切到下一个商品）时 phase 不变、
+            // 组件实例被复用，不带 key 会把上一个商品的选中图/参数残留到下一个商品上
+            key={`${agent.proposal.productKey || 'no-product'}|${agent.proposal.prompt.slice(0, 40)}`}
             proposal={agent.proposal}
             images={agent.images}
             imageModel={intentRecognition ? agent.imageModel : userModel}
             hideControls={!intentRecognition}
+            failed={Boolean(agent.error)}
             onModelChange={agent.setImageModel}
             onApprove={(prompt, ids, _model, _params) => {
               if (intentRecognition) {
                 void agent.approveProposal(prompt, ids, _model, _params);
               } else {
+                const layout = sanitizeLayoutForModel(userModel, userOutputSize, userAspectRatio);
                 void agent.approveProposal(prompt, ids, userModel, {
-                  outputSize: userOutputSize,
+                  outputSize: layout.outputSize,
                   customSize: userCustomSize,
-                  aspectRatio: userAspectRatio,
+                  aspectRatio: layout.aspectRatio,
                   temperature: userTemperature,
                   gptImageQuality: userAdvancedParams.quality,
                   gptImageStyle: userAdvancedParams.style,
@@ -792,7 +821,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
           <AgentInputEditor
             ref={editorRef}
             images={agent.images}
-            disabled={disabled}
+            disabled={interactionDisabled}
             placeholder={disabled ? '请先配置 API 密钥' : '描述你想要的画面，或上传图片...'}
             onSubmit={handleEditorSubmit}
             onInputChange={(hasContent) => setHasEditorContent(hasContent)}
@@ -814,7 +843,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                 size="icon-sm"
                 className="shrink-0"
                 onClick={handleOptimize}
-                disabled={!hasEditorContent || disabled || busy}
+                disabled={!hasEditorContent || interactionDisabled || busy}
                 title="优化提示词"
               >
                 <Sparkles className="h-4 w-4" />
@@ -824,7 +853,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                 size="icon-sm"
                 className="shrink-0"
                 onClick={handleClearDraft}
-                disabled={!hasEditorContent && uploads.length === 0}
+                disabled={!hasEditorContent && uploads.length === 0 || interactionDisabled}
                 title="清空输入"
               >
                 <X className="h-4 w-4" />
@@ -833,7 +862,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                 size="icon-sm"
                 className="shrink-0"
                 onClick={handleSend}
-                disabled={!canSend || disabled}
+                disabled={!canSend || interactionDisabled}
                 title="发送"
               >
                 <ArrowUp className="h-4 w-4" />
@@ -850,7 +879,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             size="sm"
             className="shrink-0 gap-1.5 text-muted-foreground"
             onClick={() => fileInputRef.current?.click()}
-            disabled={busy || uploading || disabled}
+            disabled={busy || uploading || interactionDisabled}
             title="上传图片"
           >
             {uploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudUpload className="h-4 w-4" />}
@@ -867,7 +896,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
               }
               setAssetPickerOpen(true);
             }}
-            disabled={busy || uploading || disabled}
+            disabled={busy || uploading || interactionDisabled}
             title="从素材库导入图片"
           >
             <ImagePlus className="h-4 w-4" />
@@ -878,7 +907,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             size="sm"
             className="shrink-0 gap-1.5 text-muted-foreground"
             onClick={() => setTextAssetPickerOpen(true)}
-            disabled={busy || disabled}
+            disabled={busy || interactionDisabled}
             title="导入提示词素材"
           >
             <FileText className="h-4 w-4" />
@@ -889,7 +918,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
             size="sm"
             className="shrink-0 gap-1.5 text-muted-foreground"
             onClick={() => void handleSavePromptAsset()}
-            disabled={!hasEditorContent || busy || disabled}
+            disabled={!hasEditorContent || busy || interactionDisabled}
             title="存为提示词素材"
           >
             <Save className="h-4 w-4" />
@@ -907,13 +936,30 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                   : 'text-muted-foreground'
               )}
               onClick={() => agent.toggleWebSearch()}
-              disabled={busy || disabled}
+              disabled={busy || interactionDisabled}
               title={agent.webSearchEnabled ? '已开启联网搜索' : '联网搜索'}
             >
               <Globe className="h-4 w-4" />
               <span className="text-xs">联网检索</span>
             </Button>
           )}
+
+          <Button
+            variant={agent.cdpEnabled ? 'default' : 'ghost'}
+            size="sm"
+            className={cn(
+              'shrink-0 gap-1.5',
+              agent.cdpEnabled
+                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                : 'text-muted-foreground'
+            )}
+            onClick={() => agent.toggleCdp()}
+            disabled={busy || interactionDisabled}
+            title={agent.cdpEnabled ? '已开启浏览器操作（Agent 可通过 CDP 打开/读取你浏览器里的页面）' : '浏览器操作（用你浏览器的登录态打开和读取页面）'}
+          >
+            <Chrome className="h-4 w-4" />
+            <span className="text-xs">浏览器</span>
+          </Button>
 
           {/* 意图识别开关 */}
           <Button
@@ -1100,7 +1146,7 @@ export function AgentChatWorkspace({ wideMode = false, disabled = false, onConfi
                   <span className="text-[11px]">×{userParallelCount}</span>
                 </PopoverTrigger>
                 <PopoverContent className="w-36 p-1" align="start">
-                  {([1, 2, 3, 4] as ParallelCount[]).map(count => (
+                  {(PARALLEL_COUNT_VALUES as ParallelCount[]).map(count => (
                     <button
                       key={count}
                       type="button"

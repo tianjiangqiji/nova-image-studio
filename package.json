@@ -3,6 +3,7 @@
   "version": "3.3.0",
   "private": true,
   "description": "Nova Studio - AI 视频/图像生成工作台",
+  "main": "desktop/main.cjs",
   "scripts": {
     "dev": "cd frontend && npm run build && cd ../backend && cross-env NODE_ENV=production node server.js",
     "dev:old": "cd ../backend && cross-env NODE_ENV=production node server.js",
@@ -15,10 +16,21 @@
     "test:ui": "cd frontend && npm run test:ui",
     "test:run": "cd frontend && npm run test:run",
     "go": "node scripts/pack.js",
-    "install:all": "cd frontend && npm install && cd ../backend && npm install"
+    "install:all": "cd frontend && npm install && cd ../backend && npm install",
+    "electron:dev": "npm run build && cross-env NODE_ENV=production electron .",
+    "electron:dist": "npm run build && electron-builder --config electron-builder.yml",
+    "electron:dist:win": "npm run build && electron-builder --win --config electron-builder.yml",
+    "electron:dist:mac": "npm run build && electron-builder --mac --config electron-builder.yml"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
-    "cross-env": "^10.1.0"
+    "cross-env": "^10.1.0",
+    "electron": "^43.4.0",
+    "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "undici": "^8.2.0",
+    "ws": "^8.20.0"
   }
 }

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const setItemMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const cleanupUnusedMediaMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
 
 vi.mock("../../lib/localforage-storage", () => ({
   localForageStorage: {
@@ -9,6 +10,7 @@ vi.mock("../../lib/localforage-storage", () => ({
     removeItem: vi.fn().mockResolvedValue(undefined),
   },
 }));
+vi.mock("../../lib/canvas-storage-gc", () => ({ cleanupUnusedCanvasStorage: cleanupUnusedMediaMock }));
 
 import { flushPendingCanvasSave, useCanvasStore, type CanvasProject } from "../use-canvas-store";
 import { CanvasNodeType } from "../../types";
@@ -28,6 +30,7 @@ const project: CanvasProject = {
 describe("canvas store persistence semantics", () => {
   beforeEach(() => {
     setItemMock.mockClear();
+    cleanupUnusedMediaMock.mockClear();
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-28T08:00:00.000Z"));
     useCanvasStore.setState({ hydrated: true, projects: [structuredClone(project)] });
@@ -54,5 +57,15 @@ describe("canvas store persistence semantics", () => {
 
     expect(setItemMock).toHaveBeenCalled();
     expect(useCanvasStore.getState().saveStatus).toBe("saved");
+  });
+
+  it("cleans blobs using projects that remain after deletion", async () => {
+    const remaining = { ...structuredClone(project), id: "remaining" };
+    useCanvasStore.setState({ projects: [structuredClone(project), remaining] });
+
+    useCanvasStore.getState().deleteProjects([project.id]);
+    await Promise.resolve();
+
+    expect(cleanupUnusedMediaMock).toHaveBeenCalledWith([remaining]);
   });
 });

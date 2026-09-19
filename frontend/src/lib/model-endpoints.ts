@@ -27,9 +27,12 @@ function ensureGoogleBaseUrl(baseUrl: string): string {
 }
 
 export function normalizeModelBaseUrl(protocol: ProviderProtocol, baseUrl: string): string {
-  return protocol === 'google'
-    ? ensureGoogleBaseUrl(baseUrl)
-    : ensureOpenAiBaseUrl(baseUrl);
+  if (protocol === 'google') return ensureGoogleBaseUrl(baseUrl);
+  // doubao（ark）允许填 /api、/api/v3、/api/plan/v3 任意一级，版本路径由后端统一归一
+  if (protocol === 'doubao') return trimTrailingSlashes(baseUrl);
+  // alibaba-dashscope 自己拼 /api/v1/services/...，不要附加 /v1
+  if (protocol === 'alibaba-dashscope') return trimTrailingSlashes(baseUrl);
+  return ensureOpenAiBaseUrl(baseUrl);
 }
 
 export function normalizeTextModelBaseUrl(protocol: TextProviderProtocol, baseUrl: string): string {

@@ -79,5 +79,11 @@ frontend/.next/
 frontend/public/sw.js
 frontend/public/workbox-*.js
 
+# local build/debug artifacts
+/temp/
+/release/
+/.jspace/
+/server.js
+
 # other
 infinite-canvas-main/

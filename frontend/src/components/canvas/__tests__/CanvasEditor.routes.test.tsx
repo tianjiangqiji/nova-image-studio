@@ -8,6 +8,9 @@ import { CanvasNodeType, type CanvasNodeData } from "../types";
 const submitNodeGenerationMock = vi.hoisted(() => vi.fn());
 const pollNodeTaskMock = vi.hoisted(() => vi.fn());
 const checkExistingTaskMock = vi.hoisted(() => vi.fn());
+const cleanupUnusedCanvasStorageMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock("../lib/canvas-storage-gc", () => ({ cleanupUnusedCanvasStorage: cleanupUnusedCanvasStorageMock }));
 
 vi.mock("../canvas-generation-service", async () => {
   const actual = await vi.importActual<typeof import("../canvas-generation-service")>("../canvas-generation-service");
@@ -70,6 +73,7 @@ class ResizeObserverStub {
 describe("CanvasEditor prompt routes", () => {
   beforeEach(() => {
     vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    cleanupUnusedCanvasStorageMock.mockReset().mockResolvedValue(undefined);
     useCanvasStore.setState({ hydrated: true, projects: [structuredClone(project)] });
     submitNodeGenerationMock.mockReset();
     submitNodeGenerationMock.mockResolvedValue("task-1");
@@ -246,6 +250,30 @@ describe("CanvasEditor prompt routes", () => {
     expect(container.querySelector('[data-connection-id="core-beijing"]')).not.toHaveAttribute("data-route-active");
     const alternateHitPath = container.querySelector('[data-connection-id="alternate-config"]');
     expect(alternateHitPath?.nextElementSibling).toHaveAttribute("stroke", "var(--muted-foreground)");
+  });
+
+  it("keeps deleted node blobs available for undo cleanup", async () => {
+    const seeded = structuredClone(project);
+    seeded.nodes.push({
+      id: "image-1",
+      title: "图片",
+      type: CanvasNodeType.Image,
+      position: { x: 40, y: 260 },
+      width: 240,
+      height: 160,
+      metadata: { storageKey: "image:undo", content: "blob:undo" },
+    });
+    useCanvasStore.setState({ hydrated: true, projects: [seeded] });
+    const { container } = render(<CanvasEditor projectId={project.id} onBack={() => undefined} onRequireApiKey={() => undefined} showToast={() => undefined} />);
+
+    fireEvent.pointerDown(container.querySelector('[data-node-id="image-1"]')!, { button: 0, clientX: 80, clientY: 300 });
+    fireEvent.keyDown(window, { key: "Delete" });
+
+    await waitFor(() => expect(cleanupUnusedCanvasStorageMock).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ nodes: expect.arrayContaining([
+        expect.objectContaining({ metadata: expect.objectContaining({ storageKey: "image:undo" }) }),
+      ]) }),
+    ])));
   });
 
   it("marks a deleted selected route invalid and disables generation", () => {

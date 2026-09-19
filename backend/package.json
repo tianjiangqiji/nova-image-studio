@@ -11,7 +11,7 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "better-sqlite3": "^12.5.0",
+    "better-sqlite3": "^13.0.3",
     "undici": "^8.2.0",
     "ws": "^8.20.0"
   },

@@ -3,6 +3,7 @@ import { persist, type PersistStorage, type StorageValue } from "zustand/middlew
 
 import { nanoid } from "nanoid";
 import { localForageStorage } from "../lib/localforage-storage";
+import { cleanupUnusedCanvasStorage } from "../lib/canvas-storage-gc";
 import type { CanvasBackgroundMode } from "../lib/canvas-theme";
 import type { CanvasConnection, CanvasNodeData, ViewportTransform } from "../types";
 
@@ -131,11 +132,11 @@ export const useCanvasStore = create<CanvasStore>()(
         set((state) => ({
           projects: state.projects.map((project) => (project.id === id ? { ...project, title: title.trim() || project.title, updatedAt: new Date().toISOString() } : project)),
         })),
-      deleteProjects: (ids) =>
-        set((state) => {
-          const projects = state.projects.filter((project) => !ids.includes(project.id));
-          return { projects };
-        }),
+      deleteProjects: (ids) => {
+        const projects = get().projects.filter((project) => !ids.includes(project.id));
+        set({ projects });
+        void cleanupUnusedCanvasStorage(projects);
+      },
       replaceProjects: (projects) => set({ projects }),
       updateProject: (id, patch, options) =>
         set((state) => ({

@@ -1,5 +1,5 @@
 import type { GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
-import { makeStoredBlobRef, type ImageDownloadProgressItem } from '@/lib/image-downloader';
+import { makeStoredBlobRef, deleteStoredBlobs, type ImageDownloadProgressItem } from '@/lib/image-downloader';
 import { openImageDb, IMG_STORE } from '@/lib/image-db';
 
 export type Mode = 'text-to-image' | 'image-to-image' | 'prompt-gallery';
@@ -53,6 +53,35 @@ export interface StoredJob {
 }
 
 const JOBS_KEY = 'nova-jobs';
+
+/**
+ * 任务历史最多保留的已完成记录数（进行中的任务永远保留）。
+ * 无上限会让 localStorage 随使用无限增长；被淘汰的记录连同 IndexedDB 图片与 blob 一起清理。
+ */
+export const MAX_STORED_JOBS = 200;
+
+function isActiveJobStatus(status: StoredJob['status']): boolean {
+  return status === 'queued' || status === '排队中' || status === 'processing';
+}
+
+/** 淘汰超上限的已完成历史任务：返回保留列表，并异步清掉被淘汰任务的图片数据 */
+function boundJobs(jobs: StoredJob[]): StoredJob[] {
+  const active = jobs.filter(job => isActiveJobStatus(job.status));
+  const settled = jobs
+    .filter(job => !isActiveJobStatus(job.status))
+    .sort((a, b) => +new Date(b.created_at) - +new Date(a.created_at));
+  const keepCount = Math.max(0, MAX_STORED_JOBS - active.length);
+  const kept = settled.slice(0, keepCount);
+  const evicted = settled.slice(keepCount);
+  if (evicted.length > 0) {
+    for (const job of evicted) {
+      void deleteImage(job.id).catch(() => undefined);
+      // 不传 count：按 jobId 前缀删掉该任务的所有 blob
+      void deleteStoredBlobs(job.id).catch(() => undefined);
+    }
+  }
+  return [...active, ...kept];
+}
 
 // 复用单例连接层；保留这两个导出名以兼容现有调用方（如 useWorkspaceJobs）。
 export { IMG_STORE };
@@ -131,7 +160,8 @@ export function loadJobs(): StoredJob[] {
 export function saveJobs(jobs: StoredJob[]) {
   if (typeof window === 'undefined') return;
 
-  const lightweight = jobs.map(({ ...job }) => {
+  const bounded = boundJobs(jobs);
+  const lightweight = bounded.map(({ ...job }) => {
     delete job.imageData;
     delete job.images;
     delete job.refImages;

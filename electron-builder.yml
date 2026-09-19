@@ -1,0 +1,56 @@
+appId: com.novaimage.studio
+productName: Nova Image Studio
+directories:
+  output: release
+files:
+  - desktop/**
+  - frontend/out/**
+  - package.json
+  # 后端源码按需列出；生产 node_modules（better-sqlite3/undici/ws，声明在根 package.json
+  # dependencies）由 electron-builder 自动收集，server.js 在 asar 内向上解析到根 node_modules。
+  # 后端新增生产依赖时必须同步加入根 package.json dependencies。
+  - backend/server.js
+  - backend/cdp.js
+  - backend/taobao-extract.js
+  - backend/doubao.js
+  - backend/alibaba-dashscope.js
+  - backend/prompts.json
+  - backend/blacklist.json
+  - backend/package.json
+  - backend/plugin-runtime/**
+  - backend/plugins/**
+  - '!backend/plugins/**/fixtures/**'
+  - '!backend/data/**'
+  - '!backend/nova-images/**'
+  - '!backend/cdp-products/**'
+  - '!backend/.env'
+asarUnpack:
+  - node_modules/better-sqlite3/**
+  - backend/plugin-runtime/**
+  - backend/plugins/**
+# better-sqlite3 v13 的 npm 包自带全平台 N-API prebuilds（prebuilds/ 目录），
+# 运行时按平台挑选二进制；无需 electron-builder 逐平台 rebuild，
+# 且在 Linux 上交叉构建 win/mac 时 node-gyp 编译必然失败，故关闭。
+npmRebuild: false
+win:
+  target:
+    - nsis
+  artifactName: ${productName}-${version}-win-${arch}.${ext}
+  # 自分发构建（无代码签名证书）：关闭 exe 签名与资源编辑。
+  # 签名/改图标在 Linux 上依赖 wine，关闭后使用默认 Electron 图标。
+  signAndEditExecutable: false
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+mac:
+  target:
+    - target: zip
+      arch:
+        - arm64
+  category: public.app-category.graphics-design
+  artifactName: ${productName}-${version}-mac-${arch}.${ext}
+linux:
+  target:
+    - AppImage
+  artifactName: ${productName}-${version}-linux-${arch}.${ext}

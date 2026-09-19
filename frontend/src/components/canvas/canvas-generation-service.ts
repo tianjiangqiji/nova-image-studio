@@ -6,8 +6,9 @@
  * 视频/音频不在范围内；图生图无 mask（队列不支持）。
  */
 import { ackNovaTask, createNovaTask, getNovaTask, resolveImageTaskProvider, type NovaTaskResponse, type NovaTaskStatus, type ImageReference } from "@/lib/ccode-task-client";
+import type { ModelId } from "@/lib/gemini-config";
 import { fetchImageAsBlob } from "@/lib/image-downloader";
-import { normalizeModel } from "@/lib/model-capabilities";
+import { normalizeModel, resolveSubmitLayout } from "@/lib/model-capabilities";
 import { compressReferenceDataUrl } from "./lib/image-utils";
 import { uploadImage } from "./lib/image-storage";
 import type { CanvasGenerationConfig } from "./types";
@@ -61,15 +62,16 @@ export async function submitNodeGeneration(args: {
   if (!apiKey) throw new CanvasApiKeyMissingError();
 
   const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
+  const layout = resolveSubmitLayout(resolveTaskModel(args.config) as ModelId, args.config.outputSize, args.config.aspectRatio, args.prompt);
   const taskId = await createNovaTask({
     apiKey,
     baseUrl: provider.baseUrl,
     protocol: provider.protocol,
     mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",
     prompt: args.prompt,
-    outputSize: args.config.outputSize,
-    customSize: args.config.customSize,
-    aspectRatio: args.config.aspectRatio,
+    outputSize: layout.outputSize,
+    customSize: layout.outputSize === "auto" ? undefined : args.config.customSize,
+    aspectRatio: layout.aspectRatio,
     temperature: args.config.temperature,
     model: provider.modelId,
     gptImageQuality: args.config.gptImageQuality,
@@ -136,15 +138,16 @@ export async function generateCanvasImages(args: {
   if (!apiKey) throw new CanvasApiKeyMissingError();
 
   const imageRefs = (await Promise.all(args.referenceImages.map(toImageReference))).filter((ref): ref is ImageReference => ref !== null);
+  const layout = resolveSubmitLayout(resolveTaskModel(args.config) as ModelId, args.config.outputSize, args.config.aspectRatio, args.prompt);
   const taskId = await createNovaTask({
     apiKey,
     baseUrl: provider.baseUrl,
     protocol: provider.protocol,
     mode: imageRefs.length > 0 ? "image-to-image" : "text-to-image",
     prompt: args.prompt,
-    outputSize: args.config.outputSize,
-    customSize: args.config.customSize,
-    aspectRatio: args.config.aspectRatio,
+    outputSize: layout.outputSize,
+    customSize: layout.outputSize === "auto" ? undefined : args.config.customSize,
+    aspectRatio: layout.aspectRatio,
     temperature: args.config.temperature,
     model: provider.modelId,
     gptImageQuality: args.config.gptImageQuality,

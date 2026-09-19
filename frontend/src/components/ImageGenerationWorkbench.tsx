@@ -28,12 +28,14 @@ import {
   getValidOutputSizes,
   normalizeCustomImageSize,
   normalizeModel,
+  sanitizeLayoutForModel,
   supportsCustomSize,
   supportsReferenceImages,
   type GptImageAdvancedParams,
   type GptImageBackground,
   type GptImageQuality,
   type GptImageStyle,
+  PARALLEL_COUNT_VALUES,
   type ParallelCount,
 } from '@/lib/model-capabilities';
 import { prepareUploadImage, getOptimizationBadge } from '@/lib/upload-image-cache';
@@ -184,17 +186,18 @@ export function ImageGenerationWorkbench({
       const useInitial = Boolean(initialData);
       const saved = getSettingsFallback(Boolean(initialData?.refImages?.length));
       const nextModel = normalizeModel(useInitial && initialData?.model ? initialData.model : saved.model);
-      const validSizes = getValidOutputSizes(nextModel);
-      const nextOutputSize: OutputSize = useInitial && initialData?.outputSize && validSizes.includes(initialData.outputSize)
+      const candidateOutputSize: OutputSize = useInitial && initialData?.outputSize
         ? initialData.outputSize
-        : (saved.outputSize && validSizes.includes(saved.outputSize) ? saved.outputSize : validSizes[0]);
+        : (saved.outputSize || '1K');
+      const candidateAspectRatio: AspectRatio = useInitial && initialData?.aspectRatio
+        ? initialData.aspectRatio
+        : (saved.aspectRatio || '1:1');
+      const sanitized = sanitizeLayoutForModel(nextModel, candidateOutputSize, candidateAspectRatio);
+      const nextOutputSize = sanitized.outputSize;
+      const nextAspectRatio = sanitized.aspectRatio;
       const nextCustomSize = supportsCustomSize(nextModel) && nextOutputSize !== 'auto'
         ? normalizeCustomImageSize(useInitial ? initialData?.customSize : saved.customSize, getCustomSizeMaxSide(nextModel))
         : undefined;
-      const validRatios = getAspectRatioOptions(nextModel, nextOutputSize).map(a => a.value);
-      const nextAspectRatio: AspectRatio = useInitial && initialData?.aspectRatio && validRatios.includes(initialData.aspectRatio)
-        ? initialData.aspectRatio
-        : (saved.aspectRatio && validRatios.includes(saved.aspectRatio) ? saved.aspectRatio : (validRatios[0] || '1:1'));
       const nextTemperature = useInitial && typeof initialData?.temperature === 'number' && initialData.temperature >= 0 && initialData.temperature <= 2
         ? initialData.temperature
         : (typeof saved.temperature === 'number' && saved.temperature >= 0 && saved.temperature <= 2 ? saved.temperature : 1);
@@ -203,9 +206,9 @@ export function ImageGenerationWorkbench({
         style: useInitial ? initialData?.gptImageStyle : saved.gptImageStyle,
         background: useInitial ? initialData?.gptImageBackground : saved.gptImageBackground,
       });
-      const nextParallelCount: ParallelCount = useInitial && initialData?.parallelCount && [1, 2, 3, 4].includes(initialData.parallelCount)
+      const nextParallelCount: ParallelCount = useInitial && initialData?.parallelCount && PARALLEL_COUNT_VALUES.includes(initialData.parallelCount)
         ? initialData.parallelCount
-        : (saved.parallelCount && [1, 2, 3, 4].includes(saved.parallelCount) ? saved.parallelCount : 1);
+        : (saved.parallelCount && PARALLEL_COUNT_VALUES.includes(saved.parallelCount) ? saved.parallelCount : 1);
 
       setModel(nextModel);
       setOutputSize(nextOutputSize);
@@ -308,16 +311,11 @@ export function ImageGenerationWorkbench({
       activeModel = switched;
       activeMax = getModelMaxRefImages(switched);
       setModel(switched);
-      const nextSizes = getValidOutputSizes(switched);
-      const nextSize = nextSizes.includes(outputSize) ? outputSize : nextSizes[0];
-      setOutputSize(nextSize);
-      if (nextSize === 'auto') {
-        setAspectRatio('auto');
+      const sanitized = sanitizeLayoutForModel(switched, outputSize, aspectRatio);
+      setOutputSize(sanitized.outputSize);
+      setAspectRatio(sanitized.aspectRatio);
+      if (sanitized.outputSize === 'auto' || !supportsCustomSize(switched)) {
         setCustomSize(undefined);
-      } else {
-        const ratios = getAspectRatioOptions(switched, nextSize).map((item) => item.value);
-        if (!ratios.includes(aspectRatio)) setAspectRatio(ratios[0] || '1:1');
-        if (!supportsCustomSize(switched)) setCustomSize(undefined);
       }
       setGptImageAdvancedParams(getGptImageAdvancedParamsForModel(switched, gptImageAdvancedParams));
       const label = MODEL_OPTIONS.find((o) => o.value === switched)?.label || switched;

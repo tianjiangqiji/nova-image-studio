@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  deleteStoredBlobIfOwner,
   downloadAndStoreImages,
   fetchImageAsBlob,
   getStoredBlob,
+  storeImageBlob,
   type ImageDownloadProgressItem,
 } from '@/lib/image-downloader';
 
@@ -27,6 +29,15 @@ function makeStream(chunks: number[][], failAtIndex?: number): ReadableStream<Ui
 
 function mockImageFetch(response: Response): void {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+}
+
+function readBlobText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
 }
 
 afterEach(() => {
@@ -111,5 +122,17 @@ describe('downloadAndStoreImages', () => {
     expect(result.items[0]).toMatchObject({ index: 0, status: 'cached', loadedBytes: 2, totalBytes: 2, percent: 100 });
     expect(progress.some(item => item.status === 'downloading' && item.percent === 100)).toBe(true);
     await expect(getStoredBlob('job-fallback', 0)).resolves.toMatchObject({ size: 2 });
+  });
+
+  it('不会用旧 owner cleanup 删除同 key 的新 blob', async () => {
+    vi.stubGlobal('indexedDB', undefined);
+    await storeImageBlob('agent-img', 0, new Blob(['old']), undefined, 1);
+    await storeImageBlob('agent-img', 0, new Blob(['new']), undefined, 2);
+
+    await deleteStoredBlobIfOwner('agent-img', 0, 1);
+
+    const blob = await getStoredBlob('agent-img', 0);
+    expect(blob).not.toBeNull();
+    expect(await readBlobText(blob!)).toBe('new');
   });
 });

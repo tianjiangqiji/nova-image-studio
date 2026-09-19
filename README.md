@@ -113,7 +113,7 @@ Starting from one UI mockup: AI auto-slices it → you adjust in the slice edito
 | --- | --- | --- |
 | 🎨 Text to image | `TextToImageForm` | Generate from a text prompt, multiple images in parallel |
 | 🖼️ Image to image | `ImageToImageForm` | Upload references to edit / convert / restyle |
-| 🤖 Agent | `AgentChatWorkspace` | Conversational generation: chat → plan → images, with vision descriptions, web search and reasoning |
+| 🤖 Agent | `AgentChatWorkspace` | Conversational generation: chat → plan → images, with vision descriptions, web search, reasoning, and local browser CDP (open/read pages; Taobao product pages can extract title/SKU/main images) |
 | ✂️ UI design mode | `SliceWorkspace` | UI mockup → slice assets → web reproduction (wide screens only, see below) |
 | 🔍 Reverse prompt | `ReversePromptForm` | Upload an image and stream back a prompt (any configured text model) |
 | 🎬 GIF generation | `GifGenerationWorkspace` | Multi-frame generation + grid assembly, GIF encoded in-browser (`gifenc`) |
@@ -226,6 +226,8 @@ nova-image-studio/
 │   └── vitest.config.ts
 ├── backend/
 │   ├── server.js             # Node service (HTTP + WS + SQLite + task queue)
+│   ├── cdp.js                # browser CDP tools (connect to local Chrome debug port)
+│   ├── taobao-extract.js     # Taobao/Tmall product-page extractor
 │   ├── plugin-runtime/       # video plugin runtime: registry, validation, templates, executor, media, verify CLI
 │   ├── plugins/              # installed video plugins (placed by an admin)
 │   │   └── ccode-h3/         # reference implementation: MiniMax H3
@@ -233,6 +235,7 @@ nova-image-studio/
 │   ├── blacklist.json        # blocked words
 │   ├── .env.example
 │   └── package.json
+├── desktop/                  # Electron desktop shell (Windows / macOS)
 ├── docs/
 │   ├── images/               # README screenshots
 │   └── plugins/              # video plugin docs (including LLM.md for AI consumption)
@@ -245,6 +248,38 @@ nova-image-studio/
 ```
 
 > Production builds land in `frontend/out/` and are served statically by `server.js`.
+
+---
+
+## 🖥️ Desktop (Windows / macOS)
+
+The desktop build packs frontend, backend and the Electron shell into a single installer. No separate Node.js setup is required.
+
+- **Install**: download the platform package from Releases (macOS Apple Silicon `.zip`, Windows `.exe`).
+
+  > ⚠️ Packages are unsigned: on macOS first-open via Finder **right-click → Open**; on Windows choose **Run anyway** at SmartScreen.
+
+- **Build from source**:
+
+  ```bash
+  npm install                 # root deps (electron / electron-builder)
+  npm run install:all         # frontend + backend deps
+  npm run electron:dist:win   # Windows installer
+  npm run electron:dist:mac   # macOS Apple Silicon zip (arm64)
+  ```
+
+  Artifacts land in `release/`.
+
+- **Data**: SQLite and generated images live in the OS userData directory. Reinstalling the app does not wipe them.
+- **Desktop-only**: one-click debug browser launch and browser CDP tools (see below).
+
+---
+
+## 🌐 Browser CDP
+
+Chrome DevTools Protocol talks to a local debug port (default 9222; Agent can switch to 9224). With the Agent "browser" switch on, it can open/list tabs and read page text. For Taobao/Tmall product pages, `browser_read_taobao` extracts title, price, shop, SKU, main images and detail images.
+
+CDP only binds `127.0.0.1` and only reads tabs you opened.
 
 ---
 
@@ -504,6 +539,14 @@ docker push tianjiangqiji/nova-image-studio:latest
 | `NOVA_MEDIA_MAX_VIDEO_BYTES` | no | `52428800` | Per-file limit for reference videos |
 | `NOVA_MEDIA_MAX_AUDIO_BYTES` | no | `15728640` | Per-file limit for reference audio |
 | `NOVA_PUBLIC_BASE_URL` | situational | inferred from proxy headers | This service's public address. Upstreams fetch reference media anonymously, so **an internal-only deployment must set this explicitly** |
+| `NOVA_CDP_ENABLED` | no | `false` | Browser CDP master switch; `false` makes `/api/nova/cdp/*` return 404 (restart) |
+| `NOVA_CDP_HOST` | no | `127.0.0.1` | Local Chrome debug host (hot) |
+| `NOVA_CDP_PORT` | no | `9222` | Local Chrome debug port (hot; Agent can change it) |
+| `NOVA_CDP_TIMEOUT_MS` | no | `20000` | CDP request timeout in ms (hot) |
+| `NOVA_CDP_LAUNCH_ENABLED` | no | `true` | Allow launching a debug browser from the app (hot; desktop/local) |
+| `NOVA_CDP_EVAL_ENABLED` | no | `false` | Allow `/api/nova/cdp/evaluate` to run arbitrary JS (hot; off by default) |
+| `NOVA_CDP_DIR` | no | sibling `cdp-products` | Product-asset dump directory (restart) |
+| `NOVA_CHROME_PATH` | no | empty | Override Chrome executable path (restart) |
 
 > Most runtime settings take effect **immediately** after editing `.env` (concurrency, rate limits, queue size, accepting-new-tasks switch, gallery mode, media size limits). Startup-level settings — `PORT`, `HOSTNAME`, `NODE_ENV`, `NOVA_TASK_DB`, `NOVA_IMAGE_DIR`, `NOVA_PLUGINS_DIR` — still need a restart.
 
@@ -530,6 +573,17 @@ The backend lives under `/api/nova/*`; the frontend calls it same-origin.
 | `POST` | `/api/nova/plugin-media?pluginId=&kind=` | Upload reference media, returns a public URL |
 | `GET` | `/api/nova/plugin-media/:file` | Read back reference media (anonymous, for upstreams to fetch) |
 | `WS` | `/api/nova/ws` | Live task / queue subscription |
+| `GET` | `/api/nova/cdp/status` | Debug-browser connection status (desktop/local) |
+| `GET`/`POST` | `/api/nova/cdp/config` | Read / hot-update CDP port (desktop/local) |
+| `GET` | `/api/nova/cdp/targets` | List page tabs in the debug browser |
+| `POST` | `/api/nova/cdp/open` | Open a URL in a new debug tab |
+| `POST` | `/api/nova/cdp/read-page` | Read page text with scripts/styles stripped |
+| `POST` | `/api/nova/cdp/extract` | Extract Taobao/Tmall product info from a tab |
+| `POST` | `/api/nova/cdp/fetch-image` | Download product images into the local library |
+| `POST` | `/api/nova/cdp/screenshot` | Screenshot a tab |
+| `POST` | `/api/nova/cdp/launch` | Launch a debug browser (`NOVA_CDP_LAUNCH_ENABLED`) |
+| `POST` | `/api/nova/cdp/evaluate` | Run JS in-page (off by default) |
+| `GET` | `/api/nova/cdp/products/:file` | Serve dumped product assets |
 
 ### Task states
 

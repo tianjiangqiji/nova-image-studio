@@ -5,18 +5,31 @@ import {
   isTextProviderProtocol,
   type TextProviderProtocol,
 } from '@/lib/nova-text-protocol';
+import {
+  ensureProviders,
+  guessTextProtocol,
+  imageProtocolForKind,
+  inferImagePreset,
+  migrateLegacyProviders,
+  normalizeProviderBaseUrl,
+  type ProviderConfig,
+} from '@/lib/provider-registry';
 
-export type ProviderProtocol = 'google' | 'openai' | 'grok';
+export type ProviderProtocol = 'google' | 'openai' | 'grok' | 'doubao' | 'alibaba-dashscope';
 export type ImageOutputSize = '512' | '1K' | '2K' | '4K';
 export type BuiltinImagePresetId =
   | 'gemini-2.5-flash-image'
   | 'gemini-3-pro-image-preview'
   | 'gemini-3.1-flash-image-preview'
   | 'gemini-3.1-flash-lite-image'
+  | 'antigravity-gemini-image'
   | 'gpt-image-2'
   | 'grok-imagine-image'
   | 'grok-imagine-image-quality'
-  | 'grok-imagine-image-edit';
+  | 'grok-imagine-image-edit'
+  | 'doubao-seedream'
+  | 'alibaba-qwen-image'
+  | 'alibaba-wan-image';
 
 export interface ImageModelConfig {
   id: string;
@@ -87,6 +100,7 @@ const TEXT_DEFAULT_TASKS: TextDefaultTask[] = [
 ];
 
 export interface NovaModelRegistry {
+  providers?: ProviderConfig[];
   imageModels: ImageModelConfig[];
   textModels: TextModelConfig[];
   defaults: DefaultModels;
@@ -135,6 +149,16 @@ export const BUILTIN_IMAGE_PRESETS: Record<BuiltinImagePresetId, BuiltinImagePre
     maxOutputSize: '1K',
     supportsAdvancedParams: false,
   },
+  'antigravity-gemini-image': {
+    id: 'antigravity-gemini-image',
+    protocol: 'openai',
+    name: 'Antigravity Gemini',
+    modelId: 'gemini-3-pro-image-preview',
+    baseUrl: '',
+    maxRefImages: 14,
+    maxOutputSize: '4K',
+    supportsAdvancedParams: false,
+  },
   'gpt-image-2': {
     id: 'gpt-image-2',
     protocol: 'openai',
@@ -171,7 +195,37 @@ export const BUILTIN_IMAGE_PRESETS: Record<BuiltinImagePresetId, BuiltinImagePre
     name: 'Grok Imagine Edit',
     modelId: 'grok-imagine-image-edit',
     baseUrl: 'https://api.x.ai',
-    maxRefImages: 4,
+    maxRefImages: 3,
+    maxOutputSize: '2K',
+    supportsAdvancedParams: false,
+  },
+  'doubao-seedream': {
+    id: 'doubao-seedream',
+    protocol: 'doubao',
+    name: 'Seedream（豆包）',
+    modelId: 'doubao-seedream-5.0-lite',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api',
+    maxRefImages: 14,
+    maxOutputSize: '4K',
+    supportsAdvancedParams: false,
+  },
+  'alibaba-qwen-image': {
+    id: 'alibaba-qwen-image',
+    protocol: 'alibaba-dashscope',
+    name: 'Qwen Image 3.0 Pro（阿里）',
+    modelId: 'qwen-image-3.0-pro',
+    baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com',
+    maxRefImages: 3,
+    maxOutputSize: '2K',
+    supportsAdvancedParams: false,
+  },
+  'alibaba-wan-image': {
+    id: 'alibaba-wan-image',
+    protocol: 'alibaba-dashscope',
+    name: '万相 Wan2.7 Image（阿里）',
+    modelId: 'wan2.7-image',
+    baseUrl: 'https://token-plan.cn-beijing.maas.aliyuncs.com',
+    maxRefImages: 9,
     maxOutputSize: '2K',
     supportsAdvancedParams: false,
   },
@@ -230,7 +284,7 @@ export const DEFAULT_DEFAULTS: DefaultModels = {
 };
 
 function isProviderProtocol(value: unknown): value is ProviderProtocol {
-  return value === 'google' || value === 'openai' || value === 'grok';
+  return value === 'google' || value === 'openai' || value === 'grok' || value === 'doubao' || value === 'alibaba-dashscope';
 }
 
 function isBuiltinImagePresetId(value: unknown): value is BuiltinImagePresetId {
@@ -249,6 +303,8 @@ function inferBuiltinPresetId(raw: Partial<ImageModelConfig>): BuiltinImagePrese
   const protocol = String(raw.protocol || '').trim();
   if (protocol === 'google') return 'gemini-3-pro-image-preview';
   if (protocol === 'grok') return 'grok-imagine-image';
+  if (protocol === 'doubao') return 'doubao-seedream';
+  if (protocol === 'alibaba-dashscope') return 'alibaba-qwen-image';
   return 'gpt-image-2';
 }
 
@@ -259,6 +315,10 @@ function normalizeImageModelConfig(raw: Partial<ImageModelConfig>): ImageModelCo
   if (!id) return null;
 
   const protocol = isProviderProtocol(raw.protocol) ? raw.protocol : preset.protocol;
+  const normalizedMaxOutputSize = normalizeImageOutputSize(raw.maxOutputSize, preset.maxOutputSize);
+  const maxOutputSize: ImageOutputSize = presetId === 'doubao-seedream' && normalizedMaxOutputSize !== '4K'
+    ? '2K'
+    : normalizedMaxOutputSize;
   return {
     id,
     protocol,
@@ -267,10 +327,22 @@ function normalizeImageModelConfig(raw: Partial<ImageModelConfig>): ImageModelCo
     apiKey: String(raw.apiKey || '').trim(),
     baseUrl: String(raw.baseUrl || preset.baseUrl).trim(),
     builtinPreset: presetId,
-    maxRefImages: Number.isFinite(raw.maxRefImages) && Number(raw.maxRefImages) >= 0
-      ? Math.max(0, Math.floor(Number(raw.maxRefImages)))
-      : preset.maxRefImages,
-    maxOutputSize: normalizeImageOutputSize(raw.maxOutputSize, preset.maxOutputSize),
+    // 历史 bug 自愈：这三个预设曾写入错误的默认上限（qwen/wan=0、seedream=6），
+    // 已存入 localStorage 的记录会被锁死在旧值，这里在加载时还原为预设的官方上限
+    maxRefImages: (() => {
+      const stored = Number(raw.maxRefImages);
+      const buggyDefault =
+        (presetId === 'alibaba-qwen-image' || presetId === 'alibaba-wan-image') ? 0
+        : presetId === 'doubao-seedream' ? 6
+        : null;
+      if (buggyDefault !== null && stored === buggyDefault) {
+        return preset.maxRefImages;
+      }
+      return Number.isFinite(raw.maxRefImages) && stored >= 0
+        ? Math.max(0, Math.floor(stored))
+        : preset.maxRefImages;
+    })(),
+    maxOutputSize,
     supportsAdvancedParams: protocol === 'openai'
       ? (typeof raw.supportsAdvancedParams === 'boolean' ? raw.supportsAdvancedParams : preset.supportsAdvancedParams)
       : false,
@@ -356,12 +428,18 @@ function ensureDefaults(raw: Partial<DefaultModels> | undefined, imageModels: Im
  * 该图片模型能否用于切图的图片编辑（AI 透明化 / 背景补齐）。
  *
  * 这两项都要打 `/v1/images/edits`，并且背景补齐还要传 `mask`。
- * 只有 openai 协议的模型有这个端点：Gemini 走 generateContent 没有 mask 语义，
+ * 只有真 GPT Image 这类 openai 协议模型有这个端点。
+ * Gemini 走 generateContent 没有 mask 语义；Antigravity Gemini 虽然挂 openai
+ * 协议，上游仍是 Gemini image，同样没有 mask edits。
  * Grok 的 edits 也不接受 mask 参数。所以在选择器层就把它们过滤掉，
  * 而不是等请求 400 才告诉用户。
  */
 export function isSliceCapableImageModel(model: ImageModelConfig): boolean {
-  return model.protocol === 'openai';
+  if (model.protocol !== 'openai') return false;
+  if (model.builtinPreset === 'antigravity-gemini-image') return false;
+  const modelId = String(model.modelId || '').toLowerCase();
+  if (modelId.includes('gemini') && modelId.includes('image')) return false;
+  return true;
 }
 
 /** 可用于切图图片编辑的模型列表。 */
@@ -371,9 +449,153 @@ export function getSliceCapableImageModels(registry: NovaModelRegistry): ImageMo
 
 function getInitialRegistry(): NovaModelRegistry {
   return {
+    providers: [],
     imageModels: [],
     textModels: [],
     defaults: DEFAULT_DEFAULTS,
+  };
+}
+
+function isGeminiImageModelId(modelId: string): boolean {
+  const id = String(modelId || '').toLowerCase();
+  return id.includes('gemini') && id.includes('image');
+}
+
+function isGptImageModelId(modelId: string): boolean {
+  const id = String(modelId || '').toLowerCase();
+  return id.includes('gpt-image') || id.includes('dall-e') || id.includes('dalle');
+}
+
+export function resolveDerivedImagePreset(
+  kind: ProviderConfig['kind'],
+  modelId: string,
+  stored?: BuiltinImagePresetId,
+): BuiltinImagePresetId {
+  const inferred = inferImagePreset(kind, modelId);
+  const storedOk = stored && stored in BUILTIN_IMAGE_PRESETS ? stored : undefined;
+  if (isGeminiImageModelId(modelId) && (!storedOk || storedOk.startsWith('gpt-image') || storedOk.startsWith('grok-') || storedOk.startsWith('doubao') || storedOk.startsWith('alibaba'))) {
+    return inferred;
+  }
+  if (isGptImageModelId(modelId)) return 'gpt-image-2';
+  return storedOk || inferred;
+}
+
+export function resolveDerivedImageProtocol(
+  kind: ProviderConfig['kind'],
+  modelId: string,
+  presetId: BuiltinImagePresetId,
+): ProviderProtocol {
+  if (presetId.startsWith('grok-') || /grok-imagine-image|grok-imagine-edit/.test(modelId.toLowerCase())) return 'grok';
+  if (presetId.startsWith('doubao') || modelId.toLowerCase().includes('seedream')) return 'doubao';
+  if (presetId.startsWith('alibaba') || /qwen-image|^wan2/.test(modelId.toLowerCase())) return 'alibaba-dashscope';
+  if (isGptImageModelId(modelId) || presetId.startsWith('gpt-image')) return 'openai';
+  if (presetId === 'antigravity-gemini-image') return 'openai';
+  if (presetId.startsWith('gemini') || isGeminiImageModelId(modelId)) {
+    return kind === 'google' ? 'google' : 'openai';
+  }
+  return imageProtocolForKind(kind);
+}
+
+function uniquifyDisplayNames<T extends { name: string; modelId: string }>(
+  models: T[],
+  providerNames: string[],
+): T[] {
+  const used = new Map<string, number>();
+  return models.map((model, index) => {
+    const base = model.name.trim() || model.modelId;
+    const provider = String(providerNames[index] || '').trim();
+    const clash = models.filter((item) => (item.name.trim() || item.modelId) === base).length > 1;
+    let name = clash && provider && provider !== base ? `${base}（${provider}）` : base;
+    const count = (used.get(name) || 0) + 1;
+    used.set(name, count);
+    if (count > 1) name = `${name} · ${count}`;
+    return { ...model, name };
+  });
+}
+
+export function deriveImageAndTextModels(providers: ProviderConfig[]): {
+  imageModels: ImageModelConfig[];
+  textModels: TextModelConfig[];
+} {
+  const imageModels: ImageModelConfig[] = [];
+  const textModels: TextModelConfig[] = [];
+  const imageProviderNames: string[] = [];
+  const textProviderNames: string[] = [];
+
+  for (const provider of providers) {
+    const apiKey = provider.apiKey.trim();
+    const baseUrl = normalizeProviderBaseUrl(provider.baseUrl);
+    if (!apiKey || !baseUrl) continue;
+
+    for (const entry of provider.models) {
+      if (entry.uses.includes('image')) {
+        const presetId = resolveDerivedImagePreset(provider.kind, entry.modelId, entry.builtinPreset);
+        const preset = BUILTIN_IMAGE_PRESETS[presetId];
+        const protocol = resolveDerivedImageProtocol(provider.kind, entry.modelId, presetId);
+        imageModels.push({
+          id: entry.imageConfigId || `${provider.id}::img::${entry.modelId}`,
+          protocol,
+          name: String(entry.name || '').trim() || entry.modelId,
+          modelId: entry.modelId,
+          apiKey,
+          baseUrl,
+          builtinPreset: presetId,
+          maxRefImages: Number.isFinite(entry.maxRefImages) && Number(entry.maxRefImages) >= 0
+            ? Math.floor(Number(entry.maxRefImages))
+            : preset.maxRefImages,
+          maxOutputSize: entry.maxOutputSize || preset.maxOutputSize,
+          supportsAdvancedParams: protocol === 'openai'
+            ? (typeof entry.supportsAdvancedParams === 'boolean'
+              ? entry.supportsAdvancedParams
+              : preset.supportsAdvancedParams)
+            : false,
+        });
+        imageProviderNames.push(provider.name);
+      }
+
+      if (entry.uses.includes('text')) {
+        const protocol = isTextProviderProtocol(entry.textProtocol)
+          ? entry.textProtocol
+          : guessTextProtocol(provider.kind, entry.modelId);
+        textModels.push({
+          id: entry.textConfigId || `${provider.id}::txt::${entry.modelId}`,
+          protocol,
+          name: String(entry.name || '').trim() || entry.modelId,
+          modelId: entry.modelId,
+          apiKey,
+          baseUrl,
+          note: getTextProviderDescription(protocol),
+        });
+        textProviderNames.push(provider.name);
+      }
+    }
+  }
+
+  return {
+    imageModels: uniquifyDisplayNames(imageModels, imageProviderNames),
+    textModels: uniquifyDisplayNames(textModels, textProviderNames),
+  };
+}
+
+function hydrateRegistry(parsed: Partial<NovaModelRegistry>): NovaModelRegistry {
+  let providers = ensureProviders(parsed.providers);
+  const legacyImageModels = ensureImageModels(parsed.imageModels);
+  const legacyTextModels = ensureTextModels(parsed.textModels);
+  if (providers.length === 0 && (legacyImageModels.length > 0 || legacyTextModels.length > 0)) {
+    providers = migrateLegacyProviders(legacyImageModels, legacyTextModels);
+  }
+  const derived = deriveImageAndTextModels(providers);
+  const imageModels = derived.imageModels.length > 0 || providers.length > 0
+    ? derived.imageModels
+    : legacyImageModels;
+  const textModels = derived.textModels.length > 0 || providers.length > 0
+    ? derived.textModels
+    : legacyTextModels;
+  return {
+    providers,
+    imageModels,
+    textModels,
+    defaults: ensureDefaults(parsed.defaults, imageModels, textModels),
   };
 }
 
@@ -387,24 +609,12 @@ export function loadRegistry(): NovaModelRegistry {
     return getInitialRegistry();
   }
 
-  const parsed = JSON.parse(raw) as Partial<NovaModelRegistry>;
-  const imageModels = ensureImageModels(parsed.imageModels);
-  const textModels = ensureTextModels(parsed.textModels);
-  const defaults = ensureDefaults(parsed.defaults, imageModels, textModels);
-  return { imageModels, textModels, defaults };
+  return hydrateRegistry(JSON.parse(raw) as Partial<NovaModelRegistry>);
 }
 
 export function saveRegistry(registry: NovaModelRegistry): void {
   if (typeof window === 'undefined') return;
-
-  const imageModels = ensureImageModels(registry.imageModels);
-  const textModels = ensureTextModels(registry.textModels);
-  const normalized: NovaModelRegistry = {
-    imageModels,
-    textModels,
-    defaults: ensureDefaults(registry.defaults, imageModels, textModels),
-  };
-
+  const normalized = hydrateRegistry(registry);
   localStorage.setItem(REGISTRY_KEY, JSON.stringify(normalized));
 }
 
@@ -439,22 +649,20 @@ export function getCompleteTextModels(registry: NovaModelRegistry): TextModelCon
 }
 
 export function getImageModelOutputSizes(model: ImageModelConfig): ImageOutputSize[] {
+  if (model.builtinPreset === 'doubao-seedream') {
+    return model.maxOutputSize === '4K' ? ['2K', '4K'] : ['2K'];
+  }
+
   switch (model.maxOutputSize) {
     case '4K':
-      return model.builtinPreset === 'gemini-3.1-flash-image-preview'
-        ? ['512', '1K', '2K', '4K']
-        : ['1K', '2K', '4K'];
+      return ['1K', '2K', '4K'];
     case '2K':
-      return model.builtinPreset === 'gemini-3.1-flash-image-preview'
-        ? ['512', '1K', '2K']
-        : ['1K', '2K'];
+      return ['1K', '2K'];
     case '512':
       return ['512'];
     case '1K':
     default:
-      return model.builtinPreset === 'gemini-3.1-flash-image-preview'
-        ? ['512', '1K']
-        : ['1K'];
+      return ['1K'];
   }
 }
 
