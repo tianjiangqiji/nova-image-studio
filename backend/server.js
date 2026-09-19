@@ -3013,8 +3013,15 @@ async function handleApi(req, res, pathname, searchParams) {
     }
 
     // ===== 浏览器 CDP 工具（连接本机 Chrome 抓取淘宝商品素材） =====
-    // CDP_ENABLED 为启动级开关：置 false 时整块跳过，/api/nova/cdp/* 一律 404。
-    if (CDP_ENABLED && apiPathname.startsWith('/api/nova/cdp/')) {
+    // CDP_ENABLED 为启动级开关：置 false 时返回明确指导说明的 404。
+    if (apiPathname.startsWith('/api/nova/cdp/')) {
+      if (!CDP_ENABLED) {
+        sendJson(res, 404, {
+          error: '浏览器 CDP 功能未启用，请在 backend/.env 中配置 NOVA_CDP_ENABLED=true 并重启服务。',
+          code: 'CDP_DISABLED',
+        });
+        return true;
+      }
       // 只信任 TCP socket 的真实来源。带 X-Forwarded-For 时视为经代理，必须再校验令牌。
       const cdpAuth = authorizeCdpRequest(req);
       if (!cdpAuth.ok) {

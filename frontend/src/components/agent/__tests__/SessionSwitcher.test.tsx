@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionSwitcher } from '../SessionSwitcher';
 
@@ -159,5 +159,56 @@ describe('SessionSwitcher sidebar', () => {
     expect(screen.getByRole('button', { name: '新建会话' })).toBeDisabled();
     finishSwitch?.();
     await waitFor(() => expect(screen.getByRole('button', { name: '新建会话' })).toBeEnabled());
+  });
+
+  it('opens and closes the mobile sidebar drawer when triggered', () => {
+    const onSessionChange = vi.fn();
+    const onMobileOpenChange = vi.fn();
+    const { rerender } = render(
+      <SessionSwitcher
+        activeSessionId="default"
+        onSessionChange={onSessionChange}
+        mobileOpen={true}
+        onMobileOpenChange={onMobileOpenChange}
+      />
+    );
+
+    const drawer = screen.getByRole('dialog', { name: '会话侧边栏' });
+    expect(drawer).toBeInTheDocument();
+
+    const closeBtn = within(drawer).getByRole('button', { name: '关闭侧边栏' });
+    fireEvent.click(closeBtn);
+    expect(onMobileOpenChange).toHaveBeenCalledWith(false);
+
+    rerender(
+      <SessionSwitcher
+        activeSessionId="default"
+        onSessionChange={onSessionChange}
+        mobileOpen={false}
+        onMobileOpenChange={onMobileOpenChange}
+      />
+    );
+    expect(screen.queryByRole('dialog', { name: '会话侧边栏' })).not.toBeInTheDocument();
+  });
+
+  it('selects a session and closes drawer on mobile', async () => {
+    const onSessionChange = vi.fn().mockResolvedValue(undefined);
+    const onMobileOpenChange = vi.fn();
+    render(
+      <SessionSwitcher
+        activeSessionId="default"
+        onSessionChange={onSessionChange}
+        mobileOpen={true}
+        onMobileOpenChange={onMobileOpenChange}
+      />
+    );
+
+    const drawer = screen.getByRole('dialog', { name: '会话侧边栏' });
+
+    await act(async () => {
+      fireEvent.click(within(drawer).getByRole('button', { name: '设计草稿' }));
+    });
+    expect(onSessionChange).toHaveBeenCalledWith('design');
+    expect(onMobileOpenChange).toHaveBeenCalledWith(false);
   });
 });

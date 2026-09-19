@@ -73,6 +73,7 @@ export function WorkspaceShell() {
   const galleryConfig = usePromptGalleryConfig();
   const promptGallery = usePromptGalleryAccess(galleryConfig.mode, galleryConfig.passwordEnabled, setError, () => setActiveTab('prompt-gallery'));
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [agentSidebarOpen, setAgentSidebarOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -431,6 +432,8 @@ export function WorkspaceShell() {
                     <SessionSwitcher
                       activeSessionId={activeSessionId}
                       onSessionChange={handleAgentSessionChange}
+                      mobileOpen={agentSidebarOpen}
+                      onMobileOpenChange={setAgentSidebarOpen}
                     />
                     <div className="flex min-w-0 flex-1 flex-col">
                       <AgentChatWorkspace
@@ -439,6 +442,7 @@ export function WorkspaceShell() {
                         wideMode={wideMode}
                         disabled={!workspace.hasApiKey}
                         onConfigureApiKey={() => openSettings()}
+                        onToggleSidebar={() => setAgentSidebarOpen(prev => !prev)}
                       />
                     </div>
                   </div>

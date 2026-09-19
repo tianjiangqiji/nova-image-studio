@@ -1,14 +1,23 @@
 'use client';
 
 import { useState } from 'react';
-import { Eye, EyeOff, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Eye, EyeOff, HelpCircle, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { BUILTIN_IMAGE_PRESET_OPTIONS, resolveDerivedImagePreset } from '@/lib/nova-models';
 import { fetchUpstreamModels } from '@/lib/provider-models-client';
 import {
-  MODEL_USE_OPTIONS,
   PROVIDER_KIND_OPTIONS,
   TEXT_PROTOCOL_OPTIONS,
   addManualProviderModel,
@@ -18,7 +27,7 @@ import {
   listProtocolForKind,
   mergeFetchedModels,
   providerModelRowId,
-  toggleProviderModelUse,
+  setProviderModelUse,
   type ModelUse,
   type ProviderConfig,
   type ProviderKind,
@@ -42,6 +51,7 @@ export function ProviderSettingsPanel({
   const [manualModelId, setManualModelId] = useState('');
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [providerToDelete, setProviderToDelete] = useState<ProviderConfig | null>(null);
   const selected = providers.find((provider) => provider.id === selectedProviderId) || null;
 
   const updateSelected = (patch: Partial<ProviderConfig> | ((current: ProviderConfig) => ProviderConfig)) => {
@@ -103,7 +113,7 @@ export function ProviderSettingsPanel({
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="font-medium">供应商</p>
-          <p className="text-xs text-muted-foreground">一把 Key 对应一个供应商。模型从上游拉取后勾选文本 / 图片 / 视频 / 音频。</p>
+          <p className="text-xs text-muted-foreground">一把 Key 对应一个供应商。模型从上游拉取后配置为文本或图片模型。</p>
         </div>
         <Button variant="outline" size="sm" className="gap-2" onClick={handleAdd}>
           <Plus className="w-4 h-4" />
@@ -113,30 +123,67 @@ export function ProviderSettingsPanel({
 
       <div className="grid gap-4 xl:grid-cols-[220px_minmax(0,1fr)]">
         <div className="space-y-2">
-          {providers.map((provider) => (
-            <button
-              key={provider.id}
-              type="button"
-              onClick={() => onSelect(provider.id)}
-              className={`w-full rounded-lg border px-3 py-2 text-left text-sm ${selectedProviderId === provider.id ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'}`}
-            >
-              <div className="font-medium">{provider.name || '未命名供应商'}</div>
-              <div className="text-xs text-muted-foreground">
-                {isCompleteProvider(provider) ? `${provider.models.length} 个模型` : '待补全'}
+          {providers.map((provider) => {
+            const isSelected = selectedProviderId === provider.id;
+            return (
+              <div
+                key={provider.id}
+                className={`group flex items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+                  isSelected ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => onSelect(provider.id)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <div className="font-medium truncate">{provider.name || '未命名供应商'}</div>
+                  <div className="text-xs text-muted-foreground">
+                    {isCompleteProvider(provider) ? `${provider.models.length} 个模型` : '待补全'}
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  title="删除供应商"
+                  aria-label="删除供应商"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setProviderToDelete(provider);
+                  }}
+                  className="ml-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
               </div>
-            </button>
-          ))}
+            );
+          })}
         </div>
 
         {selected && (
           <div className="space-y-4">
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-2">
-                <label className="text-xs text-muted-foreground">名称</label>
+                <label className="text-xs text-muted-foreground">供应商名称</label>
                 <Input value={selected.name} onChange={(event) => updateSelected({ name: event.target.value })} />
               </div>
               <div className="space-y-2">
-                <label className="text-xs text-muted-foreground">协议</label>
+                <div className="flex items-center gap-1.5">
+                  <label className="text-xs text-muted-foreground">供应商协议</label>
+                  <Popover>
+                    <PopoverTrigger asChild>
+                      <button
+                        type="button"
+                        className="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                        title="供应商协议说明"
+                      >
+                        <HelpCircle className="w-3.5 h-3.5" />
+                      </button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-64 p-3 text-xs leading-relaxed text-muted-foreground shadow-md" align="start">
+                      供应商协议决定获取模型的基准协议，不参与模型调用，模型调用以下方模型协议为准
+                    </PopoverContent>
+                  </Popover>
+                </div>
                 <Select
                   value={selected.kind}
                   onValueChange={(value) => updateSelected({ kind: value as ProviderKind })}
@@ -172,13 +219,13 @@ export function ProviderSettingsPanel({
               </div>
             </div>
 
-            <div className="flex flex-wrap items-end gap-2">
-              <Button variant="outline" size="sm" className="gap-2" onClick={handleFetch} disabled={fetching}>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="default" className="h-8 gap-2" onClick={handleFetch} disabled={fetching}>
                 <RefreshCw className={`w-4 h-4 ${fetching ? 'animate-spin' : ''}`} />
                 {fetching ? '读取中...' : '自动读取模型'}
               </Button>
               <Input
-                className="max-w-xs"
+                className="h-8 max-w-xs"
                 value={manualModelId}
                 placeholder="手动添加模型 ID"
                 onChange={(event) => setManualModelId(event.target.value)}
@@ -189,16 +236,7 @@ export function ProviderSettingsPanel({
                   }
                 }}
               />
-              <Button variant="outline" size="sm" onClick={handleAddManual}>添加</Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="ml-auto gap-2 text-destructive hover:text-destructive"
-                onClick={() => handleDelete(selected.id)}
-              >
-                <Trash2 className="w-4 h-4" />
-                删除供应商
-              </Button>
+              <Button variant="outline" size="default" className="h-8" onClick={handleAddManual}>添加</Button>
             </div>
 
             {fetchError && (
@@ -211,24 +249,22 @@ export function ProviderSettingsPanel({
                   <tr>
                     <th className="px-3 py-2 text-left font-medium">模型 ID</th>
                     <th className="px-3 py-2 text-left font-medium">别名</th>
-                    {MODEL_USE_OPTIONS.map((option) => (
-                      <th key={option.value} className="px-2 py-2 text-center font-medium">{option.label}</th>
-                    ))}
-                    <th className="px-3 py-2 text-left font-medium">文本协议</th>
-                    <th className="px-3 py-2 text-left font-medium">图片模板</th>
+                    <th className="px-3 py-2 text-center font-medium">类型</th>
+                    <th className="px-3 py-2 text-left font-medium">协议 / 模板</th>
                     <th className="sticky right-0 z-10 border-l bg-muted px-2 py-2" />
                   </tr>
                 </thead>
                 <tbody>
                   {selected.models.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="px-3 py-6 text-center text-xs text-muted-foreground">
+                      <td colSpan={5} className="px-3 py-6 text-center text-xs text-muted-foreground">
                         还没有模型。读取上游 /models，或手动填写模型 ID。
                       </td>
                     </tr>
                   )}
                   {selected.models.map((entry) => {
                     const rowId = providerModelRowId(entry);
+                    const isImage = entry.uses.includes('image');
                     return (
                     <tr key={rowId} className="border-t">
                       <td className="px-3 py-2">
@@ -250,37 +286,37 @@ export function ProviderSettingsPanel({
                           }}
                         />
                       </td>
-                      {MODEL_USE_OPTIONS.map((option) => (
-                        <td key={option.value} className="px-2 py-2 text-center">
-                          <input
-                            type="checkbox"
-                            checked={entry.uses.includes(option.value)}
-                            onChange={() => {
-                              updateSelected((current) => toggleProviderModelUse(current, rowId, option.value as ModelUse));
+                      <td className="px-3 py-2 text-center whitespace-nowrap">
+                        <div className="inline-flex items-center justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => updateSelected((current) => setProviderModelUse(current, rowId, 'text'))}
+                            className={`text-xs select-none transition-colors ${
+                              !isImage ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            文本
+                          </button>
+                          <Switch
+                            checked={isImage}
+                            onCheckedChange={(checked) => {
+                              const nextUse: ModelUse = checked ? 'image' : 'text';
+                              updateSelected((current) => setProviderModelUse(current, rowId, nextUse));
                             }}
                           />
-                        </td>
-                      ))}
-                      <td className="px-3 py-2 min-w-40">
-                        {entry.uses.includes('text') ? (
-                          <Select
-                            value={entry.textProtocol || guessTextProtocol(selected.kind, entry.modelId)}
-                            onValueChange={(value) => {
-                              updateSelected((current) => ({
-                                ...current,
-                                models: current.models.map((item) => (
-                                  providerModelRowId(item) === rowId ? { ...item, textProtocol: value as TextProviderProtocol } : item
-                                )),
-                              }));
-                            }}
-                            options={TEXT_PROTOCOL_OPTIONS}
-                          />
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
+                          <button
+                            type="button"
+                            onClick={() => updateSelected((current) => setProviderModelUse(current, rowId, 'image'))}
+                            className={`text-xs select-none transition-colors ${
+                              isImage ? 'font-semibold text-foreground' : 'text-muted-foreground hover:text-foreground'
+                            }`}
+                          >
+                            图片
+                          </button>
+                        </div>
                       </td>
-                      <td className="px-3 py-2 min-w-40">
-                        {entry.uses.includes('image') ? (
+                      <td className="px-3 py-2 min-w-44">
+                        {isImage ? (
                           <Select
                             value={resolveDerivedImagePreset(selected.kind, entry.modelId, entry.builtinPreset)}
                             onValueChange={(value) => {
@@ -294,7 +330,18 @@ export function ProviderSettingsPanel({
                             options={BUILTIN_IMAGE_PRESET_OPTIONS}
                           />
                         ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
+                          <Select
+                            value={entry.textProtocol || guessTextProtocol(selected.kind, entry.modelId)}
+                            onValueChange={(value) => {
+                              updateSelected((current) => ({
+                                ...current,
+                                models: current.models.map((item) => (
+                                  providerModelRowId(item) === rowId ? { ...item, textProtocol: value as TextProviderProtocol } : item
+                                )),
+                              }));
+                            }}
+                            options={TEXT_PROTOCOL_OPTIONS}
+                          />
                         )}
                       </td>
                       <td className="sticky right-0 z-10 border-l bg-background px-2 py-2 text-right">
@@ -315,10 +362,37 @@ export function ProviderSettingsPanel({
                 </tbody>
               </table>
             </div>
-            <p className="text-[11px] text-muted-foreground">视频 / 音频目前只作标记，不会出现在生图或 Agent 模型列表里。</p>
           </div>
         )}
       </div>
+
+      <Dialog open={Boolean(providerToDelete)} onOpenChange={(open) => { if (!open) setProviderToDelete(null); }}>
+        <DialogContent className="sm:max-w-md z-[60]" overlayClassName="bg-black/30">
+          <DialogHeader>
+            <DialogTitle>删除供应商</DialogTitle>
+            <DialogDescription>
+              确定要删除供应商「{providerToDelete?.name || '未命名供应商'}」吗？删除后该供应商及其下的 {providerToDelete?.models.length || 0} 个模型配置都将被移除。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex justify-end gap-2 mt-4">
+            <Button variant="outline" size="default" onClick={() => setProviderToDelete(null)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              size="default"
+              onClick={() => {
+                if (providerToDelete) {
+                  handleDelete(providerToDelete.id);
+                  setProviderToDelete(null);
+                }
+              }}
+            >
+              确定删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

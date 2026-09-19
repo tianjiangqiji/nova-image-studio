@@ -4,6 +4,10 @@
 
 @custom-variant dark (&:is(.dark *));
 
+html {
+  scrollbar-gutter: stable;
+}
+
 /* Light theme (default) - Slate palette with Sky blue */
 :root {
   --background: #ffffff;

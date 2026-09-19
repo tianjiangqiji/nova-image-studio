@@ -6,7 +6,7 @@
 
 **Self-hosted AI video/image generation workbench · bring your own models · multi-mode · PWA · live task updates**
 
-[![Version](https://img.shields.io/badge/version-v3.3.0-blue.svg)](https://github.com)
+[![Version](https://img.shields.io/badge/version-v3.4.0-blue.svg)](https://github.com)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org)
@@ -28,7 +28,7 @@ Nova Studio is an AI video/image generation workbench for individuals and small 
 - Text models support Google (`generateContent`) and OpenAI (Responses protocol)
 - **Video generation is fully plugin-based**: the host ships no upstream video protocol at all — capability comes from plugin packs
 
-> Current version: **v3.3.0**
+> Current version: **v3.4.0**
 
 ## 📚 Documentation
 

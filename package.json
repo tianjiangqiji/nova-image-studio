@@ -1,6 +1,6 @@
 {
   "name": "nova-image",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "private": true,
   "description": "Nova Studio - AI 视频/图像生成工作台",
   "main": "desktop/main.cjs",

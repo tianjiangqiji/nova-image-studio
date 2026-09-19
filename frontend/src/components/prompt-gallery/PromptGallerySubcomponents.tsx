@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { ImageHoverActions } from '@/components/workspace/results/ImageHoverActions';
 import { runImageAction, dispatchImageActionToast, type ImageActionPayload } from '@/lib/image-actions';
 import { addTextAsset } from '@/lib/asset-store';
+import { useBodyScrollLock } from '@/lib/scroll-lock';
 import type { PromptGalleryItem } from '@/lib/prompt-gallery-types';
 
 export type { PromptGalleryItem };
@@ -252,34 +253,14 @@ export function PromptDetailModal({
   const [isClosing, setIsClosing] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
-  // Disable body scroll when modal is open and trigger mount animation
+  useBodyScrollLock();
+
+  // Trigger mount animation
   useEffect(() => {
-    // Save original body styles
-    const originalOverflow = document.body.style.overflow;
-    const originalPosition = document.body.style.position;
-    const originalTop = document.body.style.top;
-    const originalWidth = document.body.style.width;
-    const scrollY = window.scrollY;
-    
-    // Lock body scroll
-    document.body.style.overflow = 'hidden';
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = '100%';
-    
-    // Trigger animation after mount
-    requestAnimationFrame(() => {
+    const frameId = requestAnimationFrame(() => {
       setIsMounted(true);
     });
-    
-    return () => {
-      // Restore body styles
-      document.body.style.overflow = originalOverflow;
-      document.body.style.position = originalPosition;
-      document.body.style.top = originalTop;
-      document.body.style.width = originalWidth;
-      window.scrollTo(0, scrollY);
-    };
+    return () => cancelAnimationFrame(frameId);
   }, []);
 
   const handleCopy = () => {
@@ -520,25 +501,11 @@ export function PromptGalleryImagePreviewModal({
     closeRef.current = handleClose;
   }, [handleClose]);
 
-  // Disable body scroll, trigger mount animation, and handle keyboard events
+  useBodyScrollLock();
+
+  // Trigger mount animation and handle keyboard events
   useEffect(() => {
-    // Save original body styles
-    const originalOverflow = document.body.style.overflow;
-    const originalPosition = document.body.style.position;
-    const originalTop = document.body.style.top;
-    const originalWidth = document.body.style.width;
-    const originalDocumentOverflow = document.documentElement.style.overflow;
-    const scrollY = window.scrollY;
-    
-    // Lock body scroll
-    document.body.style.overflow = 'hidden';
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = '100%';
-    document.documentElement.style.overflow = 'hidden';
-    
-    // Trigger animation after mount
-    requestAnimationFrame(() => {
+    const frameId = requestAnimationFrame(() => {
       setIsMounted(true);
     });
     
@@ -558,13 +525,7 @@ export function PromptGalleryImagePreviewModal({
     window.addEventListener('keydown', handleKeyDown);
     
     return () => {
-      // Restore body styles
-      document.body.style.overflow = originalOverflow;
-      document.body.style.position = originalPosition;
-      document.body.style.top = originalTop;
-      document.body.style.width = originalWidth;
-      document.documentElement.style.overflow = originalDocumentOverflow;
-      window.scrollTo(0, scrollY);
+      cancelAnimationFrame(frameId);
       window.removeEventListener('keydown', handleKeyDown);
     };
   }, [images.length]);

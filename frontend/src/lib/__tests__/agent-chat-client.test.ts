@@ -189,6 +189,29 @@ describe('buildAgentRequestBody 的 CDP 工具声明', () => {
 
     expect(requestBodyOf(mock, 0)).not.toHaveProperty('reasoning_effort');
   });
+
+  it('openai chat-completions 流式包含 delta reasoning 与尾包全量 reasoning 时不重复输出', async () => {
+    const frames = [
+      'data: ' + JSON.stringify({ choices: [{ delta: { reasoning_content: '思考第一步' } }] }) + '\n\n',
+      'data: ' + JSON.stringify({ choices: [{ delta: { reasoning_content: '思考第二步' } }] }) + '\n\n',
+      'data: ' + JSON.stringify({
+        choices: [{
+          delta: { content: '最终正文' },
+          message: { role: 'assistant', content: '最终正文', reasoning_content: '思考第一步思考第二步' },
+        }],
+      }) + '\n\n',
+      'data: [DONE]\n\n',
+    ];
+    const mock = vi.fn().mockResolvedValue(sseResponse(frames));
+    vi.stubGlobal('fetch', mock);
+    const reasoningTokens: string[] = [];
+    const { callbacks } = makeCallbacks();
+    callbacks.onReasoning = (token: string) => reasoningTokens.push(token);
+
+    await streamAgentChat(baseInput('openai-chat-completions'), callbacks).promise;
+
+    expect(reasoningTokens.join('')).toBe('思考第一步思考第二步');
+  });
 });
 
 

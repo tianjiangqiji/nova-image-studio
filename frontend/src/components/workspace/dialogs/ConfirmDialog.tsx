@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
+import { useBodyScrollLock } from '@/lib/scroll-lock';
 
 export function ConfirmDialog({
   title,
@@ -25,25 +26,13 @@ export function ConfirmDialog({
   const [isClosing, setIsClosing] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
+  useBodyScrollLock();
+
   useEffect(() => {
-    const scrollY = window.scrollY;
-
-    document.body.style.overflow = 'hidden';
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = '100%';
-
-    requestAnimationFrame(() => {
+    const frameId = requestAnimationFrame(() => {
       setIsMounted(true);
     });
-
-    return () => {
-      document.body.style.removeProperty('overflow');
-      document.body.style.removeProperty('position');
-      document.body.style.removeProperty('top');
-      document.body.style.removeProperty('width');
-      window.scrollTo(0, scrollY);
-    };
+    return () => cancelAnimationFrame(frameId);
   }, []);
 
   const handleClose = () => {
@@ -61,16 +50,6 @@ export function ConfirmDialog({
       className={`fixed inset-0 z-50 flex items-stretch justify-center overflow-y-auto bg-black/50 transition-opacity duration-200 sm:items-center sm:p-4 ${
         isMounted && !isClosing ? 'opacity-100' : 'opacity-0'
       }`}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        width: '100vw',
-        height: '100vh',
-        overflow: 'auto',
-      }}
       onClick={handleClose}
       onWheel={event => event.stopPropagation()}
       onTouchMove={event => event.stopPropagation()}

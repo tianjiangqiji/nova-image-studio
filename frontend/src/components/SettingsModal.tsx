@@ -9,7 +9,6 @@ import {
   ImageIcon,
   Info,
   Package,
-  Plus,
   RefreshCw,
   Save,
   Settings,
@@ -20,6 +19,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -131,6 +131,9 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
   const [modelStatuses, setModelStatuses] = useState<ModelStatus[] | null>(null);
   const [modelCheckError, setModelCheckError] = useState<string | null>(null);
 
+  const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
+  const [initialSavedSnapshot, setInitialSavedSnapshot] = useState<string>('');
+
   const [backupProgress, setBackupProgress] = useState<BackupProgressType>({ percent: 0, message: '' });
   const [isBackupActive, setIsBackupActive] = useState(false);
   const [backupError, setBackupError] = useState<string | null>(null);
@@ -142,19 +145,23 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
     [providers],
   );
 
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (!isOpen) return;
     const registry = loadRegistry();
     const nextProviders = registry.providers || [];
+    const nextDefaults = normalizeDefaults(registry.defaults, registry.imageModels, registry.textModels);
     setProviders(nextProviders);
     setSelectedProviderId(nextProviders[0]?.id || '');
-    setDefaults(normalizeDefaults(registry.defaults, registry.imageModels, registry.textModels));
+    setDefaults(nextDefaults);
+    setInitialSavedSnapshot(JSON.stringify({ providers: nextProviders, defaults: nextDefaults }));
     setError(null);
     setSuccess(null);
     setModelStatuses(null);
     setModelCheckError(null);
     setBackupError(null);
     setBackupSuccess(null);
+    setShowUnsavedConfirm(false);
   }, [isOpen]);
 
   useEffect(() => {
@@ -164,26 +171,33 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
       return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
     });
   }, [imageModels, isOpen, textModels]);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
-  const persistRegistry = () => {
+  const isDirty = useMemo(() => {
+    if (!isOpen || !initialSavedSnapshot) return false;
+    return JSON.stringify({ providers, defaults }) !== initialSavedSnapshot;
+  }, [isOpen, initialSavedSnapshot, providers, defaults]);
+
+  const persistRegistry = (): boolean => {
     if (!providers.some(isCompleteProvider)) {
       setError('至少完成一个供应商的名称、Base URL 和 API Key');
-      return;
+      return false;
     }
     if (!imageModels.some(isCompleteImageModel)) {
       setError('请至少给一个模型勾选「图片」用途');
-      return;
+      return false;
     }
     if (!textModels.some(isCompleteTextModel)) {
       setError('请至少给一个模型勾选「文本」用途');
-      return;
+      return false;
     }
 
+    const nextDefaults = normalizeDefaults(defaults, imageModels, textModels);
     const registry = {
       providers,
       imageModels,
       textModels,
-      defaults: normalizeDefaults(defaults, imageModels, textModels),
+      defaults: nextDefaults,
     };
 
     saveRegistry(registry);
@@ -194,6 +208,8 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
     setError(null);
     setModelStatuses(null);
     setModelCheckError(null);
+    setInitialSavedSnapshot(JSON.stringify({ providers, defaults: nextDefaults }));
+    return true;
   };
 
   const handleCheckModels = async () => {
@@ -275,9 +291,19 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
   );
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => {
-      if (!open && isBackupActive) return;
-      if (!open) onClose();
+    <Dialog open={isOpen} onOpenChange={(open, eventDetails) => {
+      if (!open) {
+        if (isBackupActive) {
+          eventDetails.cancel();
+          return;
+        }
+        if (isDirty) {
+          eventDetails.cancel();
+          setShowUnsavedConfirm(true);
+        } else {
+          onClose();
+        }
+      }
     }}>
       <DialogContent className="flex max-h-[92vh] flex-col overflow-hidden p-0 pt-0 gap-0 sm:max-w-5xl">
         <DialogHeader className="p-4 pb-3">
@@ -285,7 +311,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
             <Settings className="w-5 h-5 text-muted-foreground" />
             <DialogTitle>设置</DialogTitle>
           </div>
-          <DialogDescription>一个供应商一把 Key。拉取模型后勾选文本 / 图片 / 视频 / 音频。至少勾选一个文本模型和一个图片模型后，外部功能才会解锁。</DialogDescription>
+          <DialogDescription>一个供应商一把 Key。拉取或添加模型后配置为文本或图片模型。至少配置一个文本模型和一个图片模型后，外部功能才会解锁。</DialogDescription>
         </DialogHeader>
 
         <Tabs value={tab} onValueChange={value => setTab(value as SettingsTab)} className="min-h-0 flex-1 gap-0">
@@ -312,7 +338,7 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="space-y-1">
                 <p className="text-sm font-medium">供应商配置</p>
-                <p className="text-xs text-muted-foreground">同一把 Key 下的文本 / 图片 / 视频 / 音频模型放在一起。视频和音频目前只做标记，不会进入生成流程。</p>
+                <p className="text-xs text-muted-foreground">同一把 Key 下配置文本与图片模型，支持灵活切换模型类型与调用协议。</p>
               </div>
               <Button onClick={persistRegistry} className="gap-2">
                 <Save className="w-4 h-4" />
@@ -597,6 +623,53 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
           </TabsContent>
         </Tabs>
       </DialogContent>
+
+      <Dialog open={showUnsavedConfirm} onOpenChange={(open) => {
+        if (!open) setShowUnsavedConfirm(false);
+      }}>
+        <DialogContent className="sm:max-w-md z-[60]" overlayClassName="bg-black/30">
+          <DialogHeader>
+            <DialogTitle>未保存的更改</DialogTitle>
+            <DialogDescription>
+              当前有未保存的设置内容，是否在关闭前保存？
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 mt-4">
+            <Button
+              variant="outline"
+              size="default"
+              onClick={() => setShowUnsavedConfirm(false)}
+            >
+              取消
+            </Button>
+            <Button
+              variant="outline"
+              size="default"
+              className="text-destructive hover:text-destructive hover:bg-destructive/10"
+              onClick={() => {
+                setShowUnsavedConfirm(false);
+                onClose();
+              }}
+            >
+              不保存并关闭
+            </Button>
+            <Button
+              size="default"
+              onClick={() => {
+                const saved = persistRegistry();
+                if (saved) {
+                  setShowUnsavedConfirm(false);
+                  onClose();
+                } else {
+                  setShowUnsavedConfirm(false);
+                }
+              }}
+            >
+              保存并关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Dialog>
   );
 }

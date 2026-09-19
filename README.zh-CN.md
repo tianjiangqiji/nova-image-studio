@@ -6,7 +6,7 @@
 
 **自托管的 AI 视频/图像生成工作台 · 自定义模型 · 多模式 · PWA · 实时任务**
 
-[![Version](https://img.shields.io/badge/version-v3.3.0-blue.svg)](https://github.com)
+[![Version](https://img.shields.io/badge/version-v3.4.0-blue.svg)](https://github.com)
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](https://nodejs.org)
 [![Next.js](https://img.shields.io/badge/Next.js-16-black.svg)](https://nextjs.org)
@@ -27,7 +27,7 @@ Nova Studio 是一个面向个人/团队的 AI 视频/图像生成工作台。�
 - 文字模型支持 Google（generateContent）和 OpenAI（Response 协议）
 - **视频生成完全插件化**：本体不内置任何视频上游协议，能力由插件包提供
 
-> 当前版本：**v3.3.0**
+> 当前版本：**v3.4.0**
 
 ## 📚 文档
 

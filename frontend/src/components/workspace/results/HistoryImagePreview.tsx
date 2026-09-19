@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { ChevronLeft, ChevronRight, Copy, Download, ImagePlus, Maximize2, Pencil, Wand2, X } from 'lucide-react';
 import { runImageAction, applyAnnotatedImageAsReference, type ImageActionPayload } from '@/lib/image-actions';
 import { ImageAnnotationEditor } from '@/components/canvas/components/image-annotation-editor';
+import { useBodyScrollLock } from '@/lib/scroll-lock';
 
 function getDistance(t1: { clientX: number; clientY: number }, t2: { clientX: number; clientY: number }) {
   return Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
@@ -128,24 +129,7 @@ export function HistoryImagePreview({
     }
   }, [currentIndex, resetView]);
 
-  useEffect(() => {
-    const scrollY = window.scrollY;
-
-    document.body.style.overflow = 'hidden';
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = '100%';
-    document.documentElement.style.overflow = 'hidden';
-
-    return () => {
-      document.body.style.removeProperty('overflow');
-      document.body.style.removeProperty('position');
-      document.body.style.removeProperty('top');
-      document.body.style.removeProperty('width');
-      document.documentElement.style.removeProperty('overflow');
-      window.scrollTo(0, scrollY);
-    };
-  }, []);
+  useBodyScrollLock();
 
   useLayoutEffect(() => {
     applyTransform();

@@ -646,9 +646,9 @@ export function useAgentChat(sessionId = 'default') {
     setPhase('streaming');
     flushAndCancelRaf();
     setStreamingText('');
-    setStreamingReasoning(cdpEnabled ? '正在准备浏览器工具…\n' : '');
+    setStreamingReasoning('');
 
-    let reasoningBuf = cdpEnabled ? '正在准备浏览器工具…\n' : '';
+    let reasoningBuf = '';
 
     const handle = streamAgentChat(
       {

@@ -56,7 +56,11 @@ async function parseCdpResponse<T>(response: Response): Promise<T> {
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     const body = (typeof data === 'object' && data !== null ? data : {}) as CdpErrorBody;
-    const message = typeof body.error === 'string' ? body.error : `HTTP ${response.status}`;
+    let message = typeof body.error === 'string' ? body.error : '';
+    if (!message && response.status === 404) {
+      message = '浏览器自动化服务未启用（请在 backend/.env 中配置 NOVA_CDP_ENABLED=true 并重启服务）';
+    }
+    message = message || `HTTP ${response.status}`;
     const code = typeof body.code === 'string' ? body.code : undefined;
     throw new CdpApiError(message, code);
   }

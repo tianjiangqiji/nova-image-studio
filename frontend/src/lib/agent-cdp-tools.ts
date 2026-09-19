@@ -111,8 +111,21 @@ export interface AgentCdpToolResult {
   sourceUrl?: string;
 }
 
+export function normalizeCdpToolName(name: string): string {
+  if (!name || typeof name !== 'string') return '';
+  const trimmed = name.trim();
+  const canonical = trimmed.toLowerCase().replace(/[-_]/g, '');
+  for (const toolName of AGENT_CDP_TOOL_NAMES) {
+    if (toolName.replace(/_/g, '').toLowerCase() === canonical) {
+      return toolName;
+    }
+  }
+  return trimmed;
+}
+
 export function isAgentCdpTool(name: string): boolean {
-  return (AGENT_CDP_TOOL_NAMES as readonly string[]).includes(name);
+  const normalized = normalizeCdpToolName(name);
+  return (AGENT_CDP_TOOL_NAMES as readonly string[]).includes(normalized as typeof AGENT_CDP_TOOL_NAMES[number]);
 }
 
 export async function purgeCdpProductImages(files: string[]): Promise<number> {
@@ -141,10 +154,11 @@ function formatConnected(status: CdpStatus, launched: boolean): string {
 }
 
 export async function executeAgentCdpTool(
-  name: string,
+  rawName: string,
   args: Record<string, unknown>,
   onProgress?: (text: string) => void,
 ): Promise<AgentCdpToolResult> {
+  const name = normalizeCdpToolName(rawName);
   try {
     switch (name) {
       case 'browser_status': {
@@ -185,17 +199,42 @@ export async function executeAgentCdpTool(
           const existing = Array.isArray(existingTargets) ? existingTargets.find(target => target.url === url) : undefined;
           if (existing) {
             const prefix = ensured.launched ? `${formatConnected(ensured.status, true)}\n` : '';
-            return { text: `${prefix}已复用现有标签页。targetId=${existing.id}\nURL：${existing.url}` };
+            const isTaobao = /taobao\.com|tmall\.com/i.test(url);
+            const guide = isTaobao ? `\n提示：该页面为淘宝/天猫商品页，请调用 browser_read_taobao(targetId="${existing.id}") 提炼商品核心信息与主图。` : '';
+            return { text: `${prefix}已复用现有标签页。targetId=${existing.id}\nURL：${existing.url}${guide}` };
           }
         } catch {
           // 列举标签页失败时保持原有打开路径
         }
         const target = await openBrowserTab(url);
         const prefix = ensured.launched ? `${formatConnected(ensured.status, true)}\n` : '';
-        return { text: `${prefix}已打开标签页。targetId=${target.targetId}\nURL：${target.url}` };
+        const isTaobao = /taobao\.com|tmall\.com/i.test(url);
+        const guide = isTaobao ? `\n提示：该页面为淘宝/天猫商品页，请调用 browser_read_taobao(targetId="${target.targetId}") 提炼商品核心信息与主图。` : '';
+        return { text: `${prefix}已打开标签页。targetId=${target.targetId}\nURL：${target.url}${guide}` };
       }
       case 'browser_read_page': {
-        const targetId = typeof args.targetId === 'string' ? args.targetId.trim() : '';
+        let targetId = typeof args.targetId === 'string' ? args.targetId.trim() : '';
+        const urlCandidate = typeof args.url === 'string' ? args.url.trim() : '';
+        if (!targetId && urlCandidate && /^https?:\/\//i.test(urlCandidate)) {
+          targetId = urlCandidate;
+        }
+        if (/^https?:\/\//i.test(targetId)) {
+          const ensured = await ensureDebugBrowser();
+          if (!ensured.ok) return { text: ensured.text };
+          onProgress?.('检测到网页链接，正在打开标签页…');
+          try {
+            const existingTargets = await listCdpTargets();
+            const existing = Array.isArray(existingTargets) ? existingTargets.find(t => t.url === targetId) : undefined;
+            if (existing) {
+              targetId = existing.id;
+            } else {
+              const opened = await openBrowserTab(targetId);
+              targetId = opened.targetId;
+            }
+          } catch (err) {
+            return { text: `打开页面失败：${err instanceof Error ? err.message : String(err)}` };
+          }
+        }
         if (!targetId) return { text: '参数错误：缺少 targetId。' };
         const ensured = await ensureDebugBrowser();
         if (!ensured.ok) return { text: ensured.text };
@@ -206,7 +245,29 @@ export async function executeAgentCdpTool(
         return { text: `页面标题：${page.title}\n页面 URL：${page.url}\n正文内容：\n${text}` };
       }
       case 'browser_read_taobao': {
-        const targetId = typeof args.targetId === 'string' ? args.targetId.trim() : '';
+        let targetId = typeof args.targetId === 'string' ? args.targetId.trim() : '';
+        const urlCandidate = typeof args.url === 'string' ? args.url.trim() : '';
+        // 容错：若模型直接把商品 url 传给 targetId 或作为 url 参数传入，自动打开标签页并提炼
+        if (!targetId && urlCandidate && /^https?:\/\//i.test(urlCandidate)) {
+          targetId = urlCandidate;
+        }
+        if (/^https?:\/\//i.test(targetId)) {
+          const ensured = await ensureDebugBrowser();
+          if (!ensured.ok) return { text: ensured.text };
+          onProgress?.('检测到商品链接，正在打开商品页面…');
+          try {
+            const existingTargets = await listCdpTargets();
+            const existing = Array.isArray(existingTargets) ? existingTargets.find(t => t.url === targetId) : undefined;
+            if (existing) {
+              targetId = existing.id;
+            } else {
+              const opened = await openBrowserTab(targetId);
+              targetId = opened.targetId;
+            }
+          } catch (err) {
+            return { text: `打开商品页面失败：${err instanceof Error ? err.message : String(err)}` };
+          }
+        }
         if (!targetId) return { text: '参数错误：缺少 targetId。' };
         const ensured = await ensureDebugBrowser();
         if (!ensured.ok) return { text: ensured.text };

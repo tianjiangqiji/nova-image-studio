@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Sparkles, SlidersHorizontal, X } from 'lucide-react';
+import { useBodyScrollLock } from '@/lib/scroll-lock';
 
 interface GifModeChoiceDialogProps {
   onAuto: () => void;
@@ -13,22 +14,11 @@ export function GifModeChoiceDialog({ onAuto, onTune, onCancel }: GifModeChoiceD
   const [isClosing, setIsClosing] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
+  useBodyScrollLock();
+
   useEffect(() => {
-    const scrollY = window.scrollY;
-    document.body.style.overflow = 'hidden';
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${scrollY}px`;
-    document.body.style.width = '100%';
-
-    requestAnimationFrame(() => setIsMounted(true));
-
-    return () => {
-      document.body.style.removeProperty('overflow');
-      document.body.style.removeProperty('position');
-      document.body.style.removeProperty('top');
-      document.body.style.removeProperty('width');
-      window.scrollTo(0, scrollY);
-    };
+    const frameId = requestAnimationFrame(() => setIsMounted(true));
+    return () => cancelAnimationFrame(frameId);
   }, []);
 
   const close = (action: () => void) => {

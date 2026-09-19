@@ -302,6 +302,28 @@ export function addManualProviderModel(provider: ProviderConfig, modelId: string
   };
 }
 
+export function setProviderModelUse(
+  provider: ProviderConfig,
+  rowId: string,
+  use: ModelUse,
+): ProviderConfig {
+  const matchedByRowId = provider.models.filter((entry) => providerModelRowId(entry) === rowId);
+  const targets = matchedByRowId.length > 0
+    ? matchedByRowId
+    : provider.models.filter((entry) => entry.modelId === rowId);
+  const targetKeys = new Set(targets.map((entry) => providerModelRowId(entry)));
+  return {
+    ...provider,
+    models: provider.models.map((entry) => {
+      if (!targetKeys.has(providerModelRowId(entry))) return entry;
+      return {
+        ...entry,
+        uses: [use],
+      };
+    }),
+  };
+}
+
 export function toggleProviderModelUse(
   provider: ProviderConfig,
   rowId: string,

@@ -13,7 +13,7 @@ import {
   type AgentProposal,
   type AgentActionType,
 } from '@/lib/agent-chat-config';
-import { AGENT_CDP_TOOLS, isAgentCdpTool } from '@/lib/agent-cdp-tools';
+import { AGENT_CDP_TOOLS, isAgentCdpTool, normalizeCdpToolName } from '@/lib/agent-cdp-tools';
 import {
   normalizeGptImageBackground,
   normalizeGptImageQuality,
@@ -760,7 +760,7 @@ async function runAgentStream(
       const exchanges: Array<{ call: CapturedToolCall; result: string }> = [];
       for (const call of cdpCalls) {
         if (signal.aborted) return;
-        callbacks.onToolActivity?.(`\n[调用浏览器工具] ${call.name}\n`);
+        callbacks.onToolActivity?.(`\n[调用浏览器工具] ${normalizeCdpToolName(call.name)}\n`);
         const result = await executeCdpCall(input.cdpExecutor!, call, callbacks.onToolActivity);
         exchanges.push({ call, result });
         if (result.trim()) {
@@ -818,6 +818,12 @@ async function streamAgentRound(
 
   let accumulated = '';
   const toolCalls = new Map<string, CapturedToolCall>();
+  const streamState = {
+    get accumulated() { return accumulated; },
+    setAccumulated: (next: string) => { accumulated = next; },
+    toolCalls,
+    hasDeltaReasoning: false,
+  };
 
   await readSseStream(response.body, signal, (event) => {
     resetIdle?.();
@@ -833,11 +839,7 @@ async function streamAgentRound(
       return;
     }
 
-    handleAgentStreamEvent(input.protocol, payload, event.event || '', callbacks, {
-      accumulated,
-      setAccumulated: next => { accumulated = next; },
-      toolCalls,
-    });
+    handleAgentStreamEvent(input.protocol, payload, event.event || '', callbacks, streamState);
   });
 
   return {
@@ -1015,6 +1017,7 @@ function handleAgentStreamEvent(
     accumulated: string;
     setAccumulated: (value: string) => void;
     toolCalls: Map<string, CapturedToolCall>;
+    hasDeltaReasoning?: boolean;
   },
 ) {
   if (protocol === 'openai-chat-completions') {
@@ -1031,6 +1034,7 @@ function handleAgentStreamEvent(
       choice.delta?.reasoning_text,
     ].find(value => typeof value === 'string' && value.length > 0);
     if (typeof reasoningDelta === 'string' && reasoningDelta.length > 0) {
+      state.hasDeltaReasoning = true;
       callbacks.onReasoning(reasoningDelta);
     }
 
@@ -1060,7 +1064,9 @@ function handleAgentStreamEvent(
       choice.message?.reasoning,
       choice.message?.reasoning_text,
     ].find(value => typeof value === 'string' && value.length > 0);
-    if (typeof reasoningFull === 'string' && reasoningFull.length > 0) {
+    // 仅在流式未接收过增量 reasoning 时才输出，避免尾包全量 reasoning 重复追加
+    if (!state.hasDeltaReasoning && typeof reasoningFull === 'string' && reasoningFull.length > 0) {
+      state.hasDeltaReasoning = true;
       callbacks.onReasoning(reasoningFull);
     }
 

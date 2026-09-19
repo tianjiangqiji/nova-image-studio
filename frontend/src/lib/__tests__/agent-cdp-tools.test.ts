@@ -69,6 +69,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockedGetStatus.mockResolvedValue({ reachable: true, port: 9222, browser: 'Edg/151' });
   mockedLaunch.mockResolvedValue({ ok: true, message: '已启动' });
+  mockedListTargets.mockResolvedValue([]);
 });
 
 describe('AGENT_CDP_TOOLS 工具声明', () => {
@@ -78,8 +79,12 @@ describe('AGENT_CDP_TOOLS 工具声明', () => {
     expect(AGENT_CDP_TOOL_NAMES).not.toContain('browser_read_product');
   });
 
-  it('isAgentCdpTool 识别已声明的工具名', () => {
+  it('isAgentCdpTool 识别已声明的工具名（支持有无下划线及大小写容错）', () => {
     expect(isAgentCdpTool('browser_open_url')).toBe(true);
+    expect(isAgentCdpTool('browseropenurl')).toBe(true);
+    expect(isAgentCdpTool('browserOpenUrl')).toBe(true);
+    expect(isAgentCdpTool('browser-open-url')).toBe(true);
+    expect(isAgentCdpTool('browserreadtaobao')).toBe(true);
     expect(isAgentCdpTool('propose_image_action')).toBe(false);
   });
 });
@@ -152,6 +157,24 @@ describe('executeAgentCdpTool', () => {
     mockedListTargets.mockRejectedValue(new CdpApiError('浏览器不可达', 'CDP_UNREACHABLE'));
     const result = await executeAgentCdpTool('browser_list_tabs', {});
     expect(result.text).toContain('浏览器不可达');
+  });
+
+  it('executeAgentCdpTool 支持无下划线名称如 browseropenurl 执行', async () => {
+    mockedOpenTab.mockResolvedValue({ targetId: 'T-NoUnderline', url: 'https://detail.tmall.com/item.htm?id=123' });
+    const result = await executeAgentCdpTool('browseropenurl', { url: 'https://detail.tmall.com/item.htm?id=123' });
+    expect(mockedOpenTab).toHaveBeenCalledWith('https://detail.tmall.com/item.htm?id=123');
+    expect(result.text).toContain('targetId=T-NoUnderline');
+    expect(result.text).toContain('browser_read_taobao');
+  });
+
+  it('browser_read_taobao 传入商品 URL 时自动先打开页面并提炼', async () => {
+    mockedOpenTab.mockResolvedValue({ targetId: 'T-AutoOpened', url: 'https://detail.tmall.com/item.htm?id=999' });
+    mockedExtract.mockResolvedValue(SAMPLE_PRODUCT);
+    mockedFetchImages.mockResolvedValue([]);
+    const result = await executeAgentCdpTool('browser_read_taobao', { targetId: 'https://detail.tmall.com/item.htm?id=999' });
+    expect(mockedOpenTab).toHaveBeenCalledWith('https://detail.tmall.com/item.htm?id=999');
+    expect(mockedExtract).toHaveBeenCalledWith('T-AutoOpened');
+    expect(result.text).toContain(SAMPLE_PRODUCT.title);
   });
 
   it('purgeCdpProductImages 只提交 CDP 落盘路径', async () => {

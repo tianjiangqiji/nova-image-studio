@@ -16,27 +16,10 @@ import {
 import { runImageAction, type ImageActionPayload } from '@/lib/image-actions';
 
 import { BA_RANDOM_URL, BING_WALLPAPER_URL } from '@/lib/constants';
+import { useBodyScrollLock } from '@/lib/scroll-lock';
 
 function getDistance(t1: { clientX: number; clientY: number }, t2: { clientX: number; clientY: number }) {
   return Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
-}
-
-/** Lock body scroll while mounted, preserving scroll position. */
-function useBodyScrollLock(active: boolean) {
-  useEffect(() => {
-    if (!active) return;
-    const scrollY = window.scrollY;
-    Object.assign(document.body.style, { overflow: 'hidden', position: 'fixed', top: `-${scrollY}px`, width: '100%' });
-    document.documentElement.style.overflow = 'hidden';
-    return () => {
-      document.body.style.removeProperty('overflow');
-      document.body.style.removeProperty('position');
-      document.body.style.removeProperty('top');
-      document.body.style.removeProperty('width');
-      document.documentElement.style.removeProperty('overflow');
-      window.scrollTo(0, scrollY);
-    };
-  }, [active]);
 }
 
 export interface WorkspaceHeaderRef {
