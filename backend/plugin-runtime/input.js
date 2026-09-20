@@ -104,7 +104,14 @@ function validateAndNormalizeInput(plugin, input) {
   const facets = {};
   for (const facet of selector.facets) {
     const options = selector.facetOptions[facet.key];
-    const value = rawFacets[facet.key];
+    let value = rawFacets[facet.key];
+    if (value === undefined) {
+      if (facet.key === 'targetModel' && input.model !== undefined) {
+        value = input.model;
+      } else if (Array.isArray(options) && options.length === 1) {
+        value = options[0].value;
+      }
+    }
     const option = options.find(item => String(item.value) === String(value));
     if (!option) {
       throw new InputError(`参数「${facet.label}」的取值无效: ${JSON.stringify(value)}`);

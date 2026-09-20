@@ -41,25 +41,58 @@ function readJsonFile(filePath) {
 
 function loadOnePlugin(dirName) {
   const dir = path.join(getPluginsDir(), dirName);
-  for (const fileName of REQUIRED_FILES) {
-    if (!fs.existsSync(path.join(dir, fileName))) {
-      throw new Error(`缺少必需文件 ${fileName}`);
+  const manifestPath = path.join(dir, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) {
+    throw new Error('缺少必需文件 manifest.json');
+  }
+
+  const manifest = readJsonFile(manifestPath);
+
+  const scriptPath = path.join(dir, 'index.js');
+  const hasScriptDriver = fs.existsSync(scriptPath);
+  let driver = null;
+  if (hasScriptDriver) {
+    try {
+      const resolved = require.resolve(scriptPath);
+      delete require.cache[resolved];
+      driver = require(scriptPath);
+    } catch (e) {
+      throw new Error(`加载 index.js 失败: ${e.message}`, { cause: e });
     }
   }
 
-  const manifest = readJsonFile(path.join(dir, 'manifest.json'));
-  const uiSchema = readJsonFile(path.join(dir, 'ui.schema.json'));
-  const provider = readJsonFile(path.join(dir, 'provider.json'));
+  const providerPath = path.join(dir, 'provider.json');
+  const hasProvider = fs.existsSync(providerPath);
+  let provider = null;
+  if (hasProvider) {
+    provider = readJsonFile(providerPath);
+  } else if (!hasScriptDriver && manifest.mode !== 'script') {
+    throw new Error('缺少必需文件 provider.json 或 index.js');
+  }
 
-  const result = validatePluginPackage({ manifest, uiSchema, provider, dirName });
+  const uiSchemaPath = path.join(dir, 'ui.schema.json');
+  let uiSchema = null;
+  if (fs.existsSync(uiSchemaPath)) {
+    uiSchema = readJsonFile(uiSchemaPath);
+  }
+
+  const result = validatePluginPackage({
+    manifest,
+    uiSchema,
+    provider,
+    dirName,
+    driver,
+    hasScriptDriver,
+  });
   if (!result.ok) throw new Error(result.message);
 
   return {
     id: manifest.id,
     dir,
     manifest,
-    uiSchema,
+    uiSchema: result.uiSchema || uiSchema,
     provider,
+    driver,
     // 主机白名单预先小写化，请求前逐个比对
     allowedHosts: new Set(manifest.permissions.hosts.map(host => String(host).toLowerCase())),
   };

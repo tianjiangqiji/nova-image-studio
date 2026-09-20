@@ -135,6 +135,66 @@ function resolveRequest(spec, context, plugin, what) {
  * @throws {PluginRequestError}
  */
 async function submitTask(plugin, context) {
+  if (plugin.driver) {
+    const timeoutMs = Number(plugin.manifest.runtime && plugin.manifest.runtime.submitTimeoutMs)
+      || DEFAULT_SUBMIT_TIMEOUT_MS;
+    const req = await plugin.driver.buildSubmit(context);
+    if (!req || typeof req !== 'object' || !req.url) {
+      throw new PluginRequestError(`插件 ${plugin.id} 的 buildSubmit 必须返回包含 url 的对象`, { fatal: true });
+    }
+    const url = assertUrlAllowed(plugin, req.url, '创建请求');
+    const method = String(req.method || 'POST').toUpperCase();
+    const headers = {};
+    for (const [key, value] of Object.entries(req.headers || {})) {
+      headers[key] = String(value);
+    }
+    const init = { method, headers };
+    if (method !== 'GET' && method !== 'HEAD' && req.body !== undefined) {
+      init.body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+      if (!Object.keys(headers).some(key => key.toLowerCase() === 'content-type')) {
+        headers['Content-Type'] = 'application/json';
+      }
+    }
+
+    const response = await fetchWithTimeout(url, init, timeoutMs);
+    const text = await response.text();
+    const payload = parseJsonSafely(text);
+
+    if (!response.ok) {
+      const message = (payload && (payload.error?.message || payload.error || payload.msg || payload.message))
+        || summarizeBody(text)
+        || `上游创建任务失败 (${response.status})`;
+      throw new PluginRequestError(message, { fatal: true });
+    }
+
+    if (typeof plugin.driver.parseSubmitResponse === 'function') {
+      const parsed = await plugin.driver.parseSubmitResponse(payload || text, context);
+      if (typeof parsed === 'string') {
+        return { upstreamTaskId: parsed };
+      }
+      if (parsed && parsed.taskId) {
+        return { upstreamTaskId: String(parsed.taskId), immediate: parsed.immediate };
+      }
+      if (parsed && parsed.upstreamTaskId) {
+        return parsed;
+      }
+      throw new PluginRequestError(`插件 ${plugin.id} 的 parseSubmitResponse 未返回有效任务 ID`, { fatal: true });
+    }
+
+    const upstreamTaskId = payload && (
+      payload.id ||
+      payload.task_id ||
+      payload.taskId ||
+      payload.data?.id ||
+      payload.data?.task_id ||
+      payload.data?.taskId
+    );
+    if (!upstreamTaskId) {
+      throw new PluginRequestError('上游未返回任务 ID', { fatal: true });
+    }
+    return { upstreamTaskId: String(upstreamTaskId) };
+  }
+
   const spec = plugin.provider.submit;
   const timeoutMs = Number(spec.timeoutMs)
     || Number(plugin.manifest.runtime && plugin.manifest.runtime.submitTimeoutMs)
@@ -180,6 +240,10 @@ async function submitTask(plugin, context) {
  * @returns {{ state:'queued'|'processing'|'completed'|'failed', progress?: number, assets?: object[], error?: string }}
  */
 function normalizePollResponse(plugin, payload, context) {
+  if (plugin.driver && typeof plugin.driver.parseTaskResult === 'function') {
+    return plugin.driver.parseTaskResult(payload, context);
+  }
+
   const spec = plugin.provider.poll;
   const status = classifyStatus(payload, spec.status, `${plugin.id}/${context.upstreamTaskId}`);
   const progress = extractProgress(payload, spec.progress);
@@ -211,6 +275,46 @@ function normalizePollResponse(plugin, payload, context) {
  * 只有 provider 申报的 fatalHttpStatus（通常 400/401/403）才认定任务已经死了。
  */
 async function pollTask(plugin, context) {
+  if (plugin.driver) {
+    if (typeof plugin.driver.buildQuery !== 'function') {
+      throw new PluginRequestError(`插件 ${plugin.id} 未实现 buildQuery 方法`, { fatal: true });
+    }
+    const timeoutMs = Number(plugin.manifest.runtime && plugin.manifest.runtime.pollTimeoutMs)
+      || DEFAULT_POLL_TIMEOUT_MS;
+    const req = await plugin.driver.buildQuery(context.upstreamTaskId, context);
+    if (!req || typeof req !== 'object' || !req.url) {
+      throw new PluginRequestError(`插件 ${plugin.id} 的 buildQuery 必须返回包含 url 的对象`, { fatal: true });
+    }
+    const url = assertUrlAllowed(plugin, req.url, '查询请求');
+    const method = String(req.method || 'GET').toUpperCase();
+    const headers = {};
+    for (const [key, value] of Object.entries(req.headers || {})) {
+      headers[key] = String(value);
+    }
+    const init = { method, headers };
+    if (method !== 'GET' && method !== 'HEAD' && req.body !== undefined) {
+      init.body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+    }
+
+    const response = await fetchWithTimeout(url, init, timeoutMs);
+    const text = await response.text();
+    const payload = parseJsonSafely(text);
+
+    if (!response.ok || !payload) {
+      const fatalCodes = [400, 401, 403, 404];
+      const message = (payload && (payload.error?.message || payload.error || payload.msg || payload.message))
+        || summarizeBody(text)
+        || `上游错误 (${response.status})`;
+      if (fatalCodes.includes(response.status)) {
+        return { state: 'failed', error: message };
+      }
+      // 非致命：保持 processing，本轮不更新进度
+      return { state: 'processing' };
+    }
+
+    return normalizePollResponse(plugin, payload, context);
+  }
+
   const spec = plugin.provider.poll;
   const timeoutMs = Number(spec.timeoutMs) || DEFAULT_POLL_TIMEOUT_MS;
   const { url, init } = resolveRequest(spec, context, plugin, '查询请求');
@@ -236,7 +340,7 @@ async function pollTask(plugin, context) {
 
 /** 轮询节奏：provider 优先，其次 manifest.runtime，最后宿主默认值。 */
 function resolvePollTiming(plugin) {
-  const provider = plugin.provider.poll || {};
+  const provider = (plugin.provider && plugin.provider.poll) || {};
   const runtime = plugin.manifest.runtime || {};
   const clamp = (value, fallback, min, max) => {
     const num = Number(value);

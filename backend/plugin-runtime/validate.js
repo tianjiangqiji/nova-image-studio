@@ -48,8 +48,8 @@ function validateManifest(manifest, dirName, errors) {
     errors.add('manifest.version 必须是语义化版本，如 1.0.0');
   }
   if (manifest.kind !== 'video') errors.add('manifest.kind 目前只支持 "video"');
-  if (manifest.mode !== undefined && manifest.mode !== 'declarative') {
-    errors.add('manifest.mode 目前只支持 "declarative"');
+  if (manifest.mode !== undefined && manifest.mode !== 'declarative' && manifest.mode !== 'script') {
+    errors.add('manifest.mode 目前只支持 "declarative" 或 "script"');
   }
 
   const credential = manifest.credential;
@@ -330,16 +330,62 @@ function validateProvider(provider, manifest, errors) {
   return errors;
 }
 
+/** 脚本驱动 (index.js) 接口校验 */
+function validateScriptDriver(driver, errors) {
+  if (!driver || typeof driver !== 'object') {
+    return errors.add('脚本驱动 (index.js) 必须导出一个对象');
+  }
+  if (typeof driver.buildSubmit !== 'function') {
+    errors.add('脚本驱动 (index.js) 必须导出 buildSubmit(ctx) 函数');
+  }
+  if (driver.parseSubmitResponse !== undefined && typeof driver.parseSubmitResponse !== 'function') {
+    errors.add('脚本驱动的 parseSubmitResponse 必须是一个函数');
+  }
+  if (driver.buildQuery !== undefined && typeof driver.buildQuery !== 'function') {
+    errors.add('脚本驱动的 buildQuery 必须是一个函数');
+  }
+  if (driver.parseTaskResult !== undefined && typeof driver.parseTaskResult !== 'function') {
+    errors.add('脚本驱动的 parseTaskResult 必须是一个函数');
+  }
+}
+
 /**
  * 整包校验。
- * @returns {{ ok: boolean, message: string, messages: string[] }}
+ * @returns {{ ok: boolean, message: string, messages: string[], uiSchema?: object }}
  */
-function validatePluginPackage({ manifest, uiSchema, provider, dirName }) {
+function validatePluginPackage({ manifest, uiSchema, provider, dirName, driver, hasScriptDriver }) {
   const errors = new ValidationErrors();
   validateManifest(manifest, dirName, errors);
-  validateUiSchema(uiSchema, manifest, errors);
-  validateProvider(provider, manifest, errors);
-  return { ok: errors.ok, message: errors.message, messages: errors.messages };
+
+  let effectiveUiSchema = uiSchema;
+  if (!effectiveUiSchema && manifest) {
+    try {
+      const { synthesizeUiSchema } = require('./schema-synthesizer');
+      effectiveUiSchema = synthesizeUiSchema(manifest);
+    } catch (err) {
+      errors.add(`自动合成 ui.schema 失败: ${err.message}`);
+    }
+  }
+
+  if (effectiveUiSchema) {
+    validateUiSchema(effectiveUiSchema, manifest, errors);
+  } else if (!uiSchema) {
+    errors.add('缺少 ui.schema.json 且无法自动合成');
+  }
+
+  const isScript = Boolean((manifest && manifest.mode === 'script') || hasScriptDriver || driver);
+  if (isScript) {
+    validateScriptDriver(driver, errors);
+  } else {
+    validateProvider(provider, manifest, errors);
+  }
+
+  return {
+    ok: errors.ok,
+    message: errors.message,
+    messages: errors.messages,
+    uiSchema: effectiveUiSchema,
+  };
 }
 
 module.exports = {
@@ -350,4 +396,5 @@ module.exports = {
   validateManifest,
   validateUiSchema,
   validateProvider,
+  validateScriptDriver,
 };

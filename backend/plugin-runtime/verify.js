@@ -69,12 +69,22 @@ function runFixture(plugin, fixture) {
   const expectedRequestPath = path.join(fixture.dir, 'expected-request.json');
   if (fs.existsSync(expectedRequestPath)) {
     const expected = readJson(expectedRequestPath);
-    const submit = plugin.provider.submit;
-    const actual = {
-      method: String(submit.method || 'GET').toUpperCase(),
-      url: resolveTemplate(submit.url, context),
-      body: submit.body === undefined ? undefined : resolveTemplate(submit.body, context),
-    };
+    let actual;
+    if (plugin.driver) {
+      const req = plugin.driver.buildSubmit(context);
+      actual = {
+        method: String(req.method || 'POST').toUpperCase(),
+        url: req.url,
+        body: req.body,
+      };
+    } else {
+      const submit = plugin.provider.submit;
+      actual = {
+        method: String(submit.method || 'GET').toUpperCase(),
+        url: resolveTemplate(submit.url, context),
+        body: submit.body === undefined ? undefined : resolveTemplate(submit.body, context),
+      };
+    }
     if (expected.model !== undefined) {
       expectDeepEqual(normalized.model, expected.model, '模型 ID');
     }
@@ -88,7 +98,15 @@ function runFixture(plugin, fixture) {
   let upstreamTaskId = 'fixture-task';
   if (fs.existsSync(submitResponsePath)) {
     const payload = readJson(submitResponsePath);
-    const extracted = pickFirstString(payload, plugin.provider.submit.extract.taskId);
+    let extracted;
+    if (plugin.driver && typeof plugin.driver.parseSubmitResponse === 'function') {
+      const res = plugin.driver.parseSubmitResponse(payload, context);
+      extracted = typeof res === 'string' ? res : (res && (res.taskId || res.upstreamTaskId));
+    } else if (plugin.driver) {
+      extracted = payload && (payload.id || payload.task_id || payload.taskId || payload.data?.id || payload.data?.task_id);
+    } else {
+      extracted = pickFirstString(payload, plugin.provider.submit.extract.taskId);
+    }
     assert.ok(extracted, '未能从 upstream-submit.json 中取出上游任务 ID');
     upstreamTaskId = extracted;
   }
