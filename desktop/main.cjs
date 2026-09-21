@@ -115,6 +115,11 @@ function prepareBackendEnv(port) {
   process.env.NOVA_TASK_DB = path.join(dataDir, 'nova-tasks.sqlite');
   process.env.NOVA_IMAGE_DIR = path.join(dataDir, 'nova-images');
   process.env.NOVA_CDP_DIR = path.join(dataDir, 'cdp-products');
+  // 插件参考素材（视频插件的图片/视频/音频）必须落在可写的 userData 下：
+  // plugin-runtime/media.js 的默认值是 <backend>/data/plugin-media，打包后该路径
+  // 位于只读的 app.asar 内（且 backend/data 被 electron-builder 排除），
+  // 上传时会直接 ENOTDIR。
+  process.env.NOVA_PLUGIN_MEDIA_DIR = path.join(dataDir, 'plugin-media');
   // 桌面单机版默认开启 CDP：Agent 的 browser_* 工具依赖 /api/nova/cdp/*。
   // 未连接时默认允许自动拉起独立调试浏览器；用户可显式设 false 关闭。
   // 安全边界不变：只监听 127.0.0.1，且 authorizeCdpRequest 只放行回环来源。

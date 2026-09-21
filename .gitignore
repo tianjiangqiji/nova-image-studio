@@ -81,7 +81,9 @@ frontend/public/workbox-*.js
 
 # local build/debug artifacts
 /temp/
-/release/
+# electron-builder 输出目录。用通配是因为产物目录被占用（EBUSY）时，
+# 会临时改用 -c.directories.output=release2 之类的备用目录，别让它进仓库。
+/release*/
 /.jspace/
 /server.js
 
