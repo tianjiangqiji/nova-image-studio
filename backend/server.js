@@ -1808,16 +1808,27 @@ async function generateNovaImage(apiKey, request) {
 }
 
 function extractGeminiImagePayload(data) {
-  const imagePart = data?.candidates?.[0]?.content?.parts?.find(part => part?.inlineData?.data || part?.inline_data?.data);
-  const inlineData = imagePart?.inlineData || imagePart?.inline_data;
-  if (!inlineData?.data) {
-    const reasons = [
-      data?.promptFeedback?.blockReason,
-      data?.candidates?.[0]?.finishReason,
-    ].filter(reason => typeof reason === 'string' && reason.trim());
-    throw new Error(reasons.length ? `响应中无图片数据 (${reasons.join(', ')})` : '响应中无图片数据');
+  const parts = data?.candidates?.[0]?.content?.parts;
+  if (Array.isArray(parts)) {
+    for (const part of parts) {
+      const inlineData = part?.inlineData?.data || part?.inline_data?.data;
+      if (inlineData) return inlineData;
+      // 部分中转上游不回 base64，而是把图片以 URL 形式返回：
+      // fileData.fileUri / file_data.file_uri，甚至直接把 URL 放在 text part 里。
+      const fileUri = part?.fileData?.fileUri || part?.file_data?.file_uri
+        || part?.fileData?.url || part?.file_data?.url;
+      if (typeof fileUri === 'string' && fileUri.trim()) return `URL:${fileUri.trim()}`;
+      const textUrl = typeof part?.text === 'string'
+        ? part.text.trim().match(/https?:\/\/\S+/)?.[0]
+        : undefined;
+      if (textUrl) return `URL:${textUrl}`;
+    }
   }
-  return inlineData.data;
+  const reasons = [
+    data?.promptFeedback?.blockReason,
+    data?.candidates?.[0]?.finishReason,
+  ].filter(reason => typeof reason === 'string' && reason.trim());
+  throw new Error(reasons.length ? `响应中无图片数据 (${reasons.join(', ')})` : '响应中无图片数据');
 }
 
 const GEMINI_NATIVE_IMAGE_SIZES = new Set(['1K', '2K', '4K']);
