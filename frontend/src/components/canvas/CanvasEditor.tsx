@@ -24,7 +24,7 @@ import { CanvasConfigNodePanel } from "./components/canvas-config-node-panel";
 import { CanvasBatchGenerationDialog, CanvasGenerationPreviewDialog, type CanvasBatchPreviewItem, type CanvasVideoPreviewInfo } from "./components/canvas-generation-preview-dialog";
 import { CanvasNodeSearchDialog } from "./components/canvas-node-search-dialog";
 import { FullscreenImageViewer } from "./components/fullscreen-image-viewer";
-import type { ImageActionPayload } from "@/lib/image-actions";
+import { copyImagePayload, type ImageActionPayload } from "@/lib/image-actions";
 import { CanvasCropDialog, CanvasUpscaleDialog, CanvasSplitDialog, CanvasAngleDialog } from "./components/canvas-node-dialogs";
 import { canvasTheme } from "./lib/canvas-theme";
 import { getNodeSpec } from "./constants";
@@ -2889,6 +2889,32 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         onClose={() => setContextMenu(null)}
         actions={{
           onGenerate: () => contextNode?.type === CanvasNodeType.Config && void runGeneration(contextNode),
+          onCopyText: () => {
+            const content = contextNode?.metadata?.content;
+            if (!content) return;
+            navigator.clipboard?.writeText(content)
+              .then(() => showToast("已复制文本", "success"))
+              .catch(() => showToast("复制文本失败", "error"));
+          },
+          onCopyImage: () => {
+            if (!contextNode) return;
+            void (async () => {
+              try {
+                const storageKey = contextNode.metadata?.storageKey;
+                const stored = storageKey ? await getImageBlob(storageKey) : null;
+                if (stored) {
+                  await copyImagePayload({ blob: stored, sourceKind: "manual" });
+                } else if (contextNode.metadata?.content) {
+                  await copyImagePayload({ src: contextNode.metadata.content, sourceKind: "manual" });
+                } else {
+                  throw new Error("图片数据不可用");
+                }
+                showToast("已复制图片", "success");
+              } catch {
+                showToast("复制图片失败", "error");
+              }
+            })();
+          },
           onDuplicate: () => contextMenu?.type === "node" && duplicateNodes([contextMenu.nodeId]),
           onDelete: () => contextMenu?.type === "node" && deleteNodes(selectedIds.length ? selectedIds : [contextMenu.nodeId]),
           onDeleteImageOnly: () => contextNode && clearNodeImage(contextNode.id),

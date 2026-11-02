@@ -262,7 +262,7 @@ function LayoutSpecDialogBody({
                 onChange={(event) => setIntent(event.target.value)}
                 placeholder="描述画面意图，例如：左边一个蓝色机器人，中间一个小橙色方块，右边一盆绿色植物，都放在桌子上"
                 rows={4}
-                className="resize-none"
+                className="field-sizing-fixed resize-none"
               />
               <div className="flex items-center gap-2">
                 <Button type="button" size="sm" onClick={handleGenerate} disabled={!intent.trim() || generating}>
@@ -323,7 +323,7 @@ function LayoutSpecDialogBody({
                     onClick={() => handleApplyTemplate(template)}
                     className={cn(
                       'rounded-lg border border-border bg-card p-2.5 text-left transition-colors',
-                      'hover:border-primary/60 hover:bg-accent',
+                      'hover:border-primary/60 hover:bg-muted',
                     )}
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -352,7 +352,7 @@ function LayoutSpecDialogBody({
                       key={object.id}
                       className={cn(
                         'flex items-center gap-1.5 border-b border-border/60 px-2 py-1 last:border-b-0',
-                        object.id === selectedId ? 'bg-accent' : '',
+                        object.id === selectedId ? 'bg-muted' : '',
                       )}
                       onClick={() => setSelectedId(object.id)}
                     >
@@ -360,7 +360,7 @@ function LayoutSpecDialogBody({
                       <Input
                         value={object.label}
                         onChange={(event) => handleRenameObject(object.id, event.target.value)}
-                        className="h-6 flex-1 border-0 bg-transparent px-1 text-xs shadow-none focus-visible:ring-0"
+                        className="h-6 flex-1 rounded-md border border-transparent bg-transparent px-1 text-xs shadow-none transition-colors hover:border-input focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 md:text-xs"
                       />
                       <Button
                         type="button"
@@ -428,7 +428,7 @@ export function LayoutSpecDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[92vh] flex-col overflow-hidden sm:max-w-5xl">
+      <DialogContent className="flex h-[100dvh] max-h-none flex-col overflow-hidden sm:inset-0 sm:h-[100dvh] sm:max-h-none sm:w-full sm:max-w-none sm:translate-x-0 sm:translate-y-0 sm:rounded-none">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <LayoutTemplate className="size-4" />

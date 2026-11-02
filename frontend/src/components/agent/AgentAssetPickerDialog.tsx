@@ -153,7 +153,7 @@ export function AgentTextAssetPickerDialog({
               value={query}
               onChange={event => setQuery(event.target.value)}
               placeholder="搜索提示词内容、来源"
-              className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+              className="h-8 w-full rounded-lg border border-input bg-transparent pl-8 pr-8 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
             />
             {query && (
               <button
@@ -370,7 +370,7 @@ export function AgentAssetPickerDialog({
               value={query}
               onChange={event => setQuery(event.target.value)}
               placeholder="搜索名称、标签、备注、来源"
-              className="h-8 w-full rounded-md border border-input bg-background pl-8 pr-8 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+              className="h-8 w-full rounded-lg border border-input bg-transparent pl-8 pr-8 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
             />
             {query && (
               <button

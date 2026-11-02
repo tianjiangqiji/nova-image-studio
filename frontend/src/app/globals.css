@@ -628,3 +628,11 @@ body {
 .animate-progress-indeterminate {
   animation: progress-indeterminate 1.4s ease-in-out infinite;
 }
+
+/* 弹窗关闭只做淡出：避免 tw-animate-css 的 exit 关键帧覆盖居中 transform，
+   导致 DialogContent 在退出动画期间跳位闪一下 */
+@keyframes dialog-fade-out {
+  to {
+    opacity: 0;
+  }
+}

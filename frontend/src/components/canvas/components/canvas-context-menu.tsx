@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
-import { Copy, Crop, Eraser, FileText, Film, Grid3x3, Image as ImageIcon, Maximize2, Music, PaintBucket, RefreshCw, Rotate3d, Settings2, Sparkles, Square, Text, Trash2, Type, Upload } from "lucide-react";
+import { ClipboardCopy, Copy, Crop, Eraser, FileText, Film, Grid3x3, Image as ImageIcon, Maximize2, Music, PaintBucket, RefreshCw, Rotate3d, Settings2, Sparkles, Square, Text, Trash2, Type, Upload } from "lucide-react";
 
 import { CanvasNodeType, type CanvasNodeData, type ContextMenuState } from "../types";
 
@@ -23,6 +23,10 @@ export type CanvasContextMenuActions = {
   onAnnotationChangeFontSize?: () => void;
   onAddNodeAt?: (type: CanvasNodeType) => void;
   onConnectionCreate?: (type: CanvasNodeType) => void;
+  /** 文本节点：复制文本内容到剪贴板 */
+  onCopyText?: () => void;
+  /** 图片节点：复制图片位图到剪贴板 */
+  onCopyImage?: () => void;
   /** 视频/音频素材节点：选择本地文件 */
   onUploadMedia?: () => void;
   onPasteAt?: () => void;
@@ -79,6 +83,7 @@ export function CanvasContextMenu({ state, node, onClose, actions }: { state: Co
       });
     }
     if (isImage) {
+      if (actions.onCopyImage) items.push({ label: "复制图片", icon: <ClipboardCopy className="size-4" />, onClick: actions.onCopyImage });
       items.push({ label: "裁剪", icon: <Crop className="size-4" />, onClick: actions.onCrop });
       items.push({ label: "分割", icon: <Grid3x3 className="size-4" />, onClick: actions.onSplit });
       items.push({ label: "放大", icon: <Maximize2 className="size-4" />, onClick: actions.onUpscale });
@@ -86,6 +91,9 @@ export function CanvasContextMenu({ state, node, onClose, actions }: { state: Co
       items.push({ label: "删除图片", icon: <Eraser className="size-4" />, onClick: actions.onDeleteImageOnly });
     }
     if (isText) {
+      if (actions.onCopyText && node?.metadata?.content) {
+        items.push({ label: "复制文本", icon: <ClipboardCopy className="size-4" />, onClick: actions.onCopyText });
+      }
       if (actions.onToggleRenderMode) {
         items.push({ label: "切换 Markdown / 纯文本", icon: <Text className="size-4" />, onClick: actions.onToggleRenderMode });
       }
@@ -99,7 +107,7 @@ export function CanvasContextMenu({ state, node, onClose, actions }: { state: Co
       }
     }
     if (canRetry) items.push({ label: "重新生成", icon: <RefreshCw className="size-4" />, onClick: actions.onRetry });
-    items.push({ label: "复制", icon: <Copy className="size-4" />, onClick: actions.onDuplicate });
+    items.push({ label: "复制卡片", icon: <Copy className="size-4" />, onClick: actions.onDuplicate });
     items.push({ label: "删除", icon: <Trash2 className="size-4" />, onClick: actions.onDelete, danger: true });
   }
 
