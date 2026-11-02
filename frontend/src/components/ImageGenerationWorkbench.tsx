@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, CloudUpload, FileText, ImagePlus, Info, LayoutTemplate, Loader2, Save, Sparkles, X, Zap } from 'lucide-react';
+import { ArrowUp, CloudUpload, FileText, Frame, ImagePlus, Info, LayoutTemplate, Loader2, Save, Sparkles, X, Zap } from 'lucide-react';
 import { AttachmentChips } from './AttachmentChips';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -16,7 +16,8 @@ import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
-import { composePromptWithLayout, isLayoutSpecEmpty, type LayoutSpec } from '@/lib/layout-spec';
+import { composePromptWithLayout, isLayoutSpecEmpty, parseLayoutSpec, type LayoutSpec } from '@/lib/layout-spec';
+import { generateLayoutReferenceImage, type LayoutReferenceImage } from '@/lib/layout-reference-client';
 import { addTextAsset, getAssetBlob, type ImageAsset, type TextAsset } from '@/lib/asset-store';
 import { MODEL_IMAGE_LIMITS, MODEL_OPTIONS, type ModelId } from '@/lib/gemini-config';
 import {
@@ -65,6 +66,18 @@ interface UploadedFile {
   badge?: string;
 }
 
+/** 实时生成的构图参考图 → 待提交参考图条目（badge 标明来源，便于与手动上传区分） */
+function referenceToPendingFile(reference: LayoutReferenceImage): UploadedFile {
+  return {
+    id: reference.id,
+    name: reference.name,
+    preview: reference.dataUrl,
+    dataUrl: reference.dataUrl,
+    mimeType: reference.mimeType,
+    badge: reference.badge,
+  };
+}
+
 interface ImageGenerationWorkbenchProps {
   wideMode?: boolean;
   onSubmitText: (data: TextToImageSubmitInput) => void;
@@ -84,12 +97,21 @@ interface ImageGenerationWorkbenchProps {
     gptImageBackground?: GptImageBackground;
     parallelCount?: ParallelCount;
     refImages?: RefImageData[];
+    /** 重试/恢复带回的构图规范 */
+    layoutSpec?: LayoutSpec | null;
   };
   referenceDraft?: {
     id: number;
     refImages: RefImageData[];
     prompt?: string;
   } | null;
+  /** 素材库「编辑构图」带入的构图规范草稿：解析后进构图弹窗继续编辑 */
+  layoutDraft?: {
+    id: number;
+    content: string;
+    assetId?: string;
+  } | null;
+  onLayoutDraftConsumed?: () => void;
 }
 
 function hasStoredSettings(settings: Partial<WorkbenchSettings>): boolean {
@@ -114,6 +136,8 @@ export function ImageGenerationWorkbench({
   onConfigureApiKey,
   initialData,
   referenceDraft,
+  layoutDraft,
+  onLayoutDraftConsumed,
 }: ImageGenerationWorkbenchProps) {
   const [prompt, setPrompt] = useState('');
   const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
@@ -146,6 +170,10 @@ export function ImageGenerationWorkbench({
 
   const [layoutSpec, setLayoutSpec] = useState<LayoutSpec | null>(null);
   const [layoutDialogOpen, setLayoutDialogOpen] = useState(false);
+  // 从素材库带进来的构图素材 id：构图弹窗「存入素材库」时回写原素材
+  const [layoutSourceAssetId, setLayoutSourceAssetId] = useState('');
+  const [referenceGenerating, setReferenceGenerating] = useState(false);
+  const referenceAbortRef = useRef<AbortController | null>(null);
 
   const modelLimit = MODEL_IMAGE_LIMITS[model] || { max: getModelMaxRefImages(model), description: '最多 1 张参考图片' };
   const maxImages = modelLimit.max;
@@ -224,6 +252,7 @@ export function ImageGenerationWorkbench({
       setParallelCount(nextParallelCount);
       if (useInitial) {
         setPrompt(initialData?.prompt || '');
+        setLayoutSpec(initialData?.layoutSpec || null);
         setPendingFiles((initialData?.refImages || []).map(img => ({
           id: img.id,
           name: img.name,
@@ -355,6 +384,27 @@ export function ImageGenerationWorkbench({
     onDraftConsumed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- referenceDraft.id is the stable identity; refImages is consumed via ref guard
   }, [maxImages, model, onDraftConsumed, referenceDraft?.id]);
+
+  const consumedLayoutDraftRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!layoutDraft?.content) return;
+    if (consumedLayoutDraftRef.current === layoutDraft.id) return;
+    consumedLayoutDraftRef.current = layoutDraft.id;
+    // 与 initialData 同一范式：微任务内落状态，避免 effect 同步 setState 级联渲染
+    queueMicrotask(() => {
+      const parsed = parseLayoutSpec(layoutDraft.content);
+      if (!parsed) {
+        dispatchImageActionToast('该素材不是有效的构图规范', 'error');
+        onLayoutDraftConsumed?.();
+        return;
+      }
+      setLayoutSpec(parsed);
+      setLayoutSourceAssetId(layoutDraft.assetId || '');
+      setLayoutDialogOpen(true);
+      onLayoutDraftConsumed?.();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- layoutDraft.id is the stable identity; content is consumed via ref guard
+  }, [layoutDraft?.id, onLayoutDraftConsumed]);
 
   const detectImageAspectRatio = useCallback(async (dataUrl: string): Promise<AspectRatio | null> => {
     return new Promise((resolve) => {
@@ -570,6 +620,7 @@ export function ImageGenerationWorkbench({
     if (!finalPrompt.trim() || disabled || loading) return;
 
     const modelWithBilling = model;
+    const carriedLayoutSpec = layoutSpec && !isLayoutSpecEmpty(layoutSpec) ? layoutSpec : undefined;
     if (pendingFiles.length > 0) {
       onSubmitImage({
         prompt: finalPrompt,
@@ -583,6 +634,7 @@ export function ImageGenerationWorkbench({
         gptImageStyle: gptImageAdvancedParams.style,
         gptImageBackground: gptImageAdvancedParams.background,
         parallelCount,
+        layoutSpec: carriedLayoutSpec,
       });
     } else {
       onSubmitText({
@@ -596,6 +648,7 @@ export function ImageGenerationWorkbench({
         gptImageStyle: gptImageAdvancedParams.style,
         gptImageBackground: gptImageAdvancedParams.background,
         parallelCount,
+        layoutSpec: carriedLayoutSpec,
       });
     }
 
@@ -613,6 +666,71 @@ export function ImageGenerationWorkbench({
     setLayoutSpec(null);
     onDraftConsumed?.();
   };
+
+  // 参考图实时生成：构图 JSON → 线框指令 → 文生图任务 → 落到待提交参考图，随后正常走图生图
+  useEffect(() => () => { referenceAbortRef.current?.abort(); }, []);
+
+  const handleGenerateReference = useCallback(() => {
+    if (referenceGenerating) {
+      referenceAbortRef.current?.abort();
+      return;
+    }
+    if (!layoutSpec || isLayoutSpecEmpty(layoutSpec)) {
+      dispatchImageActionToast('请先在构图模式里画出至少一个物体', 'error');
+      return;
+    }
+
+    // 参考图必须落在支持编辑的模型上：与 referenceDraft 消费同一套切换逻辑
+    let activeModel = model;
+    let activeMax = getModelMaxRefImages(model);
+    if (!supportsReferenceImages(activeModel) || activeMax <= 0) {
+      const switched = findReferenceCapableModel(model);
+      if (!switched) {
+        setUploadError('当前没有支持参考图的模型，请先在设置中配置可编辑模型');
+        return;
+      }
+      activeModel = switched;
+      activeMax = getModelMaxRefImages(switched);
+      setModel(switched);
+      const sanitized = sanitizeLayoutForModel(switched, outputSize, aspectRatio);
+      setOutputSize(sanitized.outputSize);
+      setAspectRatio(sanitized.aspectRatio);
+      setGptImageAdvancedParams(getGptImageAdvancedParamsForModel(switched, gptImageAdvancedParams));
+      dispatchImageActionToast(`已切换到支持参考图的模型：${MODEL_OPTIONS.find((o) => o.value === switched)?.label || switched}`, 'info');
+    }
+    if (pendingFiles.length >= activeMax) {
+      setUploadError(`${MODEL_OPTIONS.find((o) => o.value === activeModel)?.label} 最多支持 ${activeMax} 张参考图，请先移除一张`);
+      return;
+    }
+
+    const controller = new AbortController();
+    referenceAbortRef.current = controller;
+    setReferenceGenerating(true);
+    setUploadError(null);
+
+    void (async () => {
+      const reference = await generateLayoutReferenceImage({
+        spec: layoutSpec,
+        model: activeModel,
+        outputSize,
+        aspectRatio,
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted) return;
+      setPendingFiles(prev => (prev.some(file => file.id === reference.id) ? prev : [referenceToPendingFile(reference), ...prev]));
+      dispatchImageActionToast('参考图已生成，将随本次提示词一起走图生图', 'success');
+    })().catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : '参考图生成失败';
+      if (message.includes('取消')) {
+        dispatchImageActionToast('已取消生成参考图', 'info');
+      } else {
+        dispatchImageActionToast(message, 'error');
+      }
+    }).finally(() => {
+      referenceAbortRef.current = null;
+      setReferenceGenerating(false);
+    });
+  }, [aspectRatio, gptImageAdvancedParams, layoutSpec, model, outputSize, pendingFiles.length, referenceGenerating]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && e.shiftKey) {
@@ -746,6 +864,15 @@ export function ImageGenerationWorkbench({
               >
                 <LayoutTemplate className="w-4 h-4" />
               </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={handleGenerateReference}
+                disabled={!hasLayout || loading}
+                title={referenceGenerating ? '正在生成构图参考图，点击取消' : '按当前构图实时生成参考图（线框示意图 → 图生图输入）'}
+              >
+                {referenceGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Frame className="w-4 h-4" />}
+              </Button>
               <Button variant="ghost" size="icon" onClick={handleOptimize} disabled={!prompt.trim()} title="优化提示词">
                 <Sparkles className="w-4 h-4" />
               </Button>
@@ -800,6 +927,7 @@ export function ImageGenerationWorkbench({
         initialSpec={layoutSpec}
         defaultAspectRatio={aspectRatio}
         backgroundImageUrl={pendingFiles[0]?.dataUrl}
+        initialAssetId={layoutSourceAssetId}
         onConfirm={setLayoutSpec}
       />
       {pendingTextAsset && createPortal(

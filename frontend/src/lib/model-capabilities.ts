@@ -8,6 +8,7 @@ import {
 } from '@/lib/gemini-config';
 import { getImageModelById, loadRegistry } from '@/lib/nova-models';
 import type { AspectRatio, OutputSize, RefImageData, StoredJob } from '@/lib/job-store';
+import type { LayoutSpec } from '@/lib/layout-spec';
 
 export type ParallelCount = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export const PARALLEL_COUNT_VALUES: ParallelCount[] = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -165,6 +166,8 @@ export interface RetryData {
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
   refImages?: RefImageData[];
+  /** 原任务的构图规范，恢复时带回构图模式 */
+  layoutSpec?: LayoutSpec;
 }
 
 function roundToMultiple(value: number, multiple: number): number {
@@ -729,6 +732,7 @@ export function getCompatibleRetryData(job: StoredJob): RetryData {
     gptImageStyle: advancedParams.style,
     gptImageBackground: advancedParams.background,
     refImages: job.refImages?.slice(0, maxRefs),
+    layoutSpec: job.layoutSpec,
   };
 }
 

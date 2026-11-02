@@ -41,7 +41,7 @@ import { finalizeCompletedServerTask } from '@/lib/workspace-task-service';
 import { classifyTaskFailure } from '@/lib/task-failure';
 import type { RefImageData, StoredJob } from '@/lib/job-store';
 import type { PluginJob } from '@/lib/plugin-job-store';
-import { subscribeImageActionToasts, subscribeUseAsImageReference } from '@/lib/image-actions';
+import { subscribeImageActionToasts, subscribeLayoutSpecEdit, subscribeUseAsImageReference } from '@/lib/image-actions';
 import {
   submitImageToImage,
   submitTextToImage,
@@ -69,6 +69,8 @@ export function WorkspaceShell() {
   const [generationHistoryFilter, setGenerationHistoryFilter] = useState<GenerationHistoryFilter>('all');
   const [generationClearScope, setGenerationClearScope] = useState<HistoryClearScope | null>(null);
   const [referenceDraft, setReferenceDraft] = useState<{ id: number; refImages: RefImageData[]; prompt?: string } | null>(null);
+  // 素材库「编辑构图」跳转：带着构图 JSON 打开生图工作台的构图编辑器
+  const [layoutDraft, setLayoutDraft] = useState<{ id: number; content: string; assetId?: string } | null>(null);
   const workspace = useWorkspaceJobs();
   const galleryConfig = usePromptGalleryConfig();
   const promptGallery = usePromptGalleryAccess(galleryConfig.mode, galleryConfig.passwordEnabled, setError, () => setActiveTab('prompt-gallery'));
@@ -100,6 +102,7 @@ export function WorkspaceShell() {
   const toastIdRef = useRef(0);
   const headerRef = useRef<WorkspaceHeaderRef>(null);
   const referenceDraftIdRef = useRef(0);
+  const layoutDraftIdRef = useRef(0);
 
   const showToast = useCallback((message: string, type: ToastData['type']) => {
     const id = `toast-${++toastIdRef.current}`;
@@ -116,6 +119,15 @@ export function WorkspaceShell() {
     setReferenceDraft({ id: ++referenceDraftIdRef.current, refImages: detail.refImages, prompt: detail.prompt });
     setActiveTab('image-generation');
   }), [workspace]);
+
+  useEffect(() => subscribeLayoutSpecEdit(detail => {
+    setLayoutDraft({ id: ++layoutDraftIdRef.current, content: detail.content, assetId: detail.assetId });
+    setActiveTab('image-generation');
+  }), []);
+
+  const handleLayoutDraftConsumed = useCallback(() => {
+    setLayoutDraft(null);
+  }, []);
 
   const handleImageDraftConsumed = useCallback(() => {
     workspace.setRetryData(null);
@@ -198,6 +210,7 @@ export function WorkspaceShell() {
         gptImageBackground: workspace.retryData.gptImageBackground,
         parallelCount: workspace.retryData.parallelCount,
         refImages: workspace.retryData.refImages,
+        layoutSpec: workspace.retryData.layoutSpec,
       }
       : undefined
   ), [workspace.retryData]);
@@ -394,6 +407,8 @@ export function WorkspaceShell() {
                       onDraftConsumed={handleImageDraftConsumed}
                       initialData={generationInitialData}
                       referenceDraft={referenceDraft}
+                      layoutDraft={layoutDraft}
+                      onLayoutDraftConsumed={handleLayoutDraftConsumed}
                     />
                   </div>
                   <HistoryJobList

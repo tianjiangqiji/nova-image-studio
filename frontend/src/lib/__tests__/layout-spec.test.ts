@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   boxFromPoints,
   buildLayoutPromptSection,
+  buildLayoutSketchPrompt,
   clampLayoutBox,
   composePromptWithLayout,
   createEmptyLayoutSpec,
@@ -249,6 +250,38 @@ describe('buildLayoutPromptSection', () => {
     expect(relationLine.split('；').length).toBeLessThanOrEqual(12);
   });
 });
+
+describe('buildLayoutSketchPrompt', () => {
+  it('空规范返回空串（无可生成的参考图）', () => {
+    expect(buildLayoutSketchPrompt(createEmptyLayoutSpec())).toBe('');
+  });
+
+  it('输出线框示意图指令：比例、逐物体区间、标签与禁实物要求', () => {
+    const prompt = buildLayoutSketchPrompt(
+      specOf([
+        obj('a', '蓝色机器人', 0.08, 0.12, 0.22, 0.55),
+        obj('b', '橙色方块', 0.4, 0.55, 0.15, 0.17),
+      ]),
+    );
+    expect(prompt).toContain('wireframe layout sketch');
+    expect(prompt).toContain('画布比例 1:1');
+    expect(prompt).toContain('只画框和文字，不要画任何实物');
+    expect(prompt).toContain('1. 「蓝色机器人」：水平 8%–30%，垂直 12%–67%');
+    expect(prompt).toContain('2. 「橙色方块」：水平 40%–55%，垂直 55%–72%');
+    expect(prompt).toContain('空间关系：蓝色机器人 位于 橙色方块 左侧。');
+    expect(prompt).toContain('不要添加阴影、渐变或装饰');
+  });
+
+  it('使用规范自带的比例', () => {
+    const prompt = buildLayoutSketchPrompt(specOf([obj('a', '主体', 0.1, 0.1, 0.2, 0.2)], '16:9'));
+    expect(prompt).toContain('画布比例 16:9');
+  });
+
+  it('单物体不输出空间关系行', () => {
+    expect(buildLayoutSketchPrompt(specOf([obj('a', '主体', 0.1, 0.1, 0.2, 0.2)]))).not.toContain('空间关系');
+  });
+});
+
 
 describe('composePromptWithLayout', () => {
   const layout = specOf([obj('a', '主体', 0.1, 0.1, 0.2, 0.2)]);

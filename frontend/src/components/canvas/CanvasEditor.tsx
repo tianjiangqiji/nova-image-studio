@@ -1143,6 +1143,12 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
     [connections, defaultConfig, nodes],
   );
 
+  /** 构图弹窗底图：当前选中的第一个图片节点，框选时可直接描参考图 */
+  const layoutBackgroundUrl = useMemo(() => {
+    const imageNode = nodes.find((node) => selectedIds.includes(node.id) && node.type === CanvasNodeType.Image);
+    return imageNode ? nodeImageUrl(imageNode) : undefined;
+  }, [nodeImageUrl, nodes, selectedIds]);
+
   const selectedConfigNodes = useMemo(
     () => nodes.filter((node) => selectedIds.includes(node.id) && node.type === CanvasNodeType.Config),
     [nodes, selectedIds],
@@ -3010,6 +3016,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       <LayoutSpecDialog
         open={layoutOpen}
         onOpenChange={setLayoutOpen}
+        backgroundImageUrl={layoutBackgroundUrl}
         onConfirm={applyLayoutSpec}
       />
 

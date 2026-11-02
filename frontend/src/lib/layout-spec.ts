@@ -304,6 +304,41 @@ export function stringifyLayoutSpec(spec: LayoutSpec): string {
   );
 }
 
+/**
+ * 生成「构图参考图」的绘图提示词：让模型画一张白底线框示意图，
+ * 只表达位置与占比，不画实物。实时生成后作为图生图的参考图输入。
+ */
+export function buildLayoutSketchPrompt(spec: LayoutSpec): string {
+  if (isLayoutSpecEmpty(spec)) return '';
+
+  const ratio = spec.aspectRatio || '1:1';
+  const lines: string[] = [
+    `请画一张构图布局示意图（wireframe layout sketch），画布比例 ${ratio}。`,
+    '要求：纯白背景，每个物体用一个细线矩形框表示，框内居中写上对应标签文字；只画框和文字，不要画任何实物、人物、产品或场景细节；整体像设计稿里的构图占位图。',
+    '物体位置与占比如下（百分比按画面宽高的相对区间）：',
+  ];
+
+  spec.objects.forEach((item, index) => {
+    lines.push(
+      `${index + 1}. 「${item.label}」：水平 ${formatRange(item.box.x, item.box.w)}，垂直 ${formatRange(item.box.y, item.box.h)}，${describeLayoutPosition(item.box)}，尺寸${describeLayoutSize(item.box)}`,
+    );
+  });
+
+  const labelById = new Map(spec.objects.map((item) => [item.id, item.label]));
+  const relationLines = spec.relations
+    .filter((relation) => labelById.has(relation.from) && labelById.has(relation.to))
+    .slice(0, MAX_RELATION_LINES)
+    .map((relation) => describeRelationLine(relation, labelById));
+
+  if (relationLines.length > 0) {
+    lines.push(`空间关系：${relationLines.join('；')}。`);
+  }
+
+  lines.push('矩形框的边线用浅灰色 1px 细线，标签用深灰无衬线小字，不要添加阴影、渐变或装饰。');
+  return lines.join('\n');
+}
+
+
 /** 由包围盒自动推导空间关系；每对物体只产出一条 */
 export function deriveLayoutRelations(objects: LayoutObject[]): LayoutRelation[] {
   const relations: LayoutRelation[] = [];

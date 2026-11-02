@@ -7,6 +7,7 @@ import {
 } from '@/lib/ccode-task-client';
 import type { ModelId } from '@/lib/gemini-config';
 import type { AspectRatio, OutputSize, StoredJob } from '@/lib/job-store';
+import type { LayoutSpec } from '@/lib/layout-spec';
 import {
   getGptImageAdvancedParamsForModel,
   resolveSubmitLayout,
@@ -29,6 +30,8 @@ export interface TextToImageSubmitInput {
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
   parallelCount: ParallelCount;
+  /** 构图规范：随任务留存，重试/恢复时带回构图模式 */
+  layoutSpec?: LayoutSpec;
 }
 
 export interface ImageToImageSubmitInput {
@@ -43,6 +46,8 @@ export interface ImageToImageSubmitInput {
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
   parallelCount: ParallelCount;
+  /** 构图规范：随任务留存，重试/恢复时带回构图模式 */
+  layoutSpec?: LayoutSpec;
 }
 
 export interface SubmitActions {
@@ -111,7 +116,8 @@ function createBaseJob(
   gptImageStyle: GptImageStyle,
   gptImageBackground: GptImageBackground,
   parallelCount: ParallelCount,
-  refImages?: StoredJob['refImages']
+  refImages?: StoredJob['refImages'],
+  layoutSpec?: LayoutSpec
 ): StoredJob {
   const advancedParams = getGptImageAdvancedParamsForModel(model as ModelId, {
     quality: gptImageQuality,
@@ -136,6 +142,7 @@ function createBaseJob(
     parallelCount,
     created_at: new Date().toISOString(),
     refImages,
+    layoutSpec,
   };
 }
 
@@ -338,7 +345,9 @@ export async function submitTextToImage(
       input.gptImageQuality,
       input.gptImageStyle,
       input.gptImageBackground,
-      input.parallelCount
+      input.parallelCount,
+      undefined,
+      input.layoutSpec
     );
     actions.addJob(job);
 
@@ -405,7 +414,8 @@ export async function submitImageToImage(
     input.gptImageStyle,
     input.gptImageBackground,
     input.parallelCount,
-    refImages
+    refImages,
+    input.layoutSpec
   );
 
   actions.addJob(job);

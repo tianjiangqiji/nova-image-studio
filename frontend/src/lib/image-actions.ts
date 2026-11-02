@@ -62,6 +62,28 @@ export function subscribeUseAsImageReference(handler: (detail: UseAsImageReferen
   return () => window.removeEventListener(USE_AS_REFERENCE_EVENT, listener);
 }
 
+export interface LayoutSpecEditDetail {
+  /** 构图规范 JSON 文本（stringifyLayoutSpec 的产物） */
+  content: string;
+  /** 来源素材 id，编辑器据此回写原素材 */
+  assetId?: string;
+}
+
+const LAYOUT_SPEC_EDIT_EVENT = 'nova-layout-spec-edit';
+
+/** 素材库「编辑构图」→ 生图工作台：带着构图 JSON 打开构图编辑器继续编辑 */
+export function dispatchLayoutSpecEdit(detail: LayoutSpecEditDetail): void {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent<LayoutSpecEditDetail>(LAYOUT_SPEC_EDIT_EVENT, { detail }));
+}
+
+export function subscribeLayoutSpecEdit(handler: (detail: LayoutSpecEditDetail) => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const listener = (event: Event) => handler((event as CustomEvent<LayoutSpecEditDetail>).detail);
+  window.addEventListener(LAYOUT_SPEC_EDIT_EVENT, listener);
+  return () => window.removeEventListener(LAYOUT_SPEC_EDIT_EVENT, listener);
+}
+
 function makeId(prefix = 'ref'): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${prefix}-${crypto.randomUUID()}`;

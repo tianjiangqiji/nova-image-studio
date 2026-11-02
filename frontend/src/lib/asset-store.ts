@@ -388,6 +388,32 @@ export async function addTextAsset(input: AddTextAssetInput): Promise<TextAsset>
   return asset;
 }
 
+/** 更新文本素材内容（重算 hash/体积），用于构图规范编辑后回写原素材 */
+export async function updateTextAssetContent(assetId: string, content: string): Promise<TextAsset> {
+  const trimmed = content.trim();
+  if (!trimmed) throw new Error('提示词内容不能为空');
+  const current = await getTextAsset(assetId);
+  if (!current) throw new Error('素材不存在');
+  const hash = await hashText(trimmed);
+  const db = await openAssetsDB();
+  if (!db) throw new Error('当前浏览器不支持素材库本地存储');
+  const assets = await getAllFromStore<AssetItem>(db, ASSETS_STORE);
+  db.close();
+  const clash = assets.find(asset => isTextAsset(asset) && asset.id !== assetId && asset.hash === hash);
+  if (clash) throw new Error('素材库中已存在内容相同的素材');
+  const updated: TextAsset = {
+    ...current,
+    hash,
+    content: trimmed,
+    sizeBytes: new TextEncoder().encode(trimmed).byteLength,
+    updatedAt: now(),
+  };
+  await putAssetAndBlob(updated, null);
+  return updated;
+}
+
+
+
 export async function findImageAssetByBlob(blob: Blob): Promise<ImageAsset | null> {
   const hash = await hashBlob(blob);
   const db = await openAssetsDB();

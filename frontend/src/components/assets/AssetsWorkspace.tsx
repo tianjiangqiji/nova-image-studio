@@ -48,7 +48,7 @@ import {
   type TextAsset,
 } from '@/lib/asset-store';
 import { generateAssetMetadata, type AssetMetadataSuggestion } from '@/lib/asset-metadata-client';
-import { dispatchImageActionToast, runImageAction, type ImageActionPayload } from '@/lib/image-actions';
+import { dispatchImageActionToast, dispatchLayoutSpecEdit, runImageAction, type ImageActionPayload } from '@/lib/image-actions';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 import { prepareUploadImage } from '@/lib/upload-image-cache';
@@ -869,6 +869,18 @@ export function AssetsWorkspace({ wideMode = false, active = true }: AssetsWorks
                     {asset.content}
                   </p>
                   <div className="mt-auto flex justify-end gap-1 pt-2">
+                    {asset.sourceKind === 'layout' && (
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        onClick={() => {
+                          dispatchLayoutSpecEdit({ content: asset.content, assetId: asset.id });
+                        }}
+                        title="编辑构图"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    )}
                     <Button
                       variant="ghost"
                       size="icon-xs"

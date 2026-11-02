@@ -27,6 +27,8 @@ interface AgentTextAssetPickerDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (asset: TextAsset) => void;
+  /** 传入后只显示该来源的文本素材（如构图弹窗只看 'layout'），避免选到普通提示词导致解析失败 */
+  sourceKindFilter?: 'layout';
 }
 
 const COLS = { mobile: 2, sm: 4, md: 5, lg: 6 } as const;
@@ -89,6 +91,7 @@ export function AgentTextAssetPickerDialog({
   open,
   onOpenChange,
   onConfirm,
+  sourceKindFilter,
 }: AgentTextAssetPickerDialogProps) {
   const [assets, setAssets] = useState<TextAsset[]>([]);
   const [loading, setLoading] = useState(false);
@@ -119,8 +122,11 @@ export function AgentTextAssetPickerDialog({
   }, [open]);
 
   const filteredAssets = useMemo(
-    () => assets.filter(asset => matchesTextAsset(asset, query)),
-    [assets, query],
+    () => assets.filter(asset => {
+      if (sourceKindFilter && asset.sourceKind !== sourceKindFilter) return false;
+      return matchesTextAsset(asset, query);
+    }),
+    [assets, query, sourceKindFilter],
   );
 
   const selectedAsset = useMemo(
@@ -141,7 +147,7 @@ export function AgentTextAssetPickerDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-4 w-4" />
-            导入提示词素材
+            {sourceKindFilter === 'layout' ? '导入构图素材' : '导入提示词素材'}
           </DialogTitle>
         </DialogHeader>
 

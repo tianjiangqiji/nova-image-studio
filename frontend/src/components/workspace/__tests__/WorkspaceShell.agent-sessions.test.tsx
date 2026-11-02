@@ -98,6 +98,7 @@ vi.mock('@/hooks/useWorkspaceJobs', () => ({
 vi.mock('@/lib/image-actions', () => ({
   subscribeImageActionToasts: () => vi.fn(),
   subscribeUseAsImageReference: () => vi.fn(),
+  subscribeLayoutSpecEdit: () => vi.fn(),
 }));
 
 function deferred<T>() {

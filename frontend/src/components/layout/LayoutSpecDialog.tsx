@@ -14,7 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import { addTextAsset, type TextAsset } from '@/lib/asset-store';
+import { addTextAsset, updateTextAssetContent, type TextAsset } from '@/lib/asset-store';
 import { dispatchImageActionToast } from '@/lib/image-actions';
 import {
   createEmptyLayoutSpec,
@@ -50,6 +50,8 @@ interface LayoutSpecDialogProps {
   backgroundImageUrl?: string;
   /** 默认画布比例（来自生图参数） */
   defaultAspectRatio?: string;
+  /** 构图来源素材 id：从素材库带入时用于「存入素材库」直接更新原素材 */
+  initialAssetId?: string;
   onConfirm: (spec: LayoutSpec) => void;
 }
 
@@ -65,12 +67,14 @@ function LayoutSpecDialogBody({
   initialSpec,
   backgroundImageUrl,
   defaultAspectRatio,
+  initialAssetId,
   onConfirm,
   onCancel,
 }: {
   initialSpec?: LayoutSpec | null;
   backgroundImageUrl?: string;
   defaultAspectRatio?: string;
+  initialAssetId?: string;
   onConfirm: (spec: LayoutSpec) => void;
   onCancel: () => void;
 }) {
@@ -96,6 +100,9 @@ function LayoutSpecDialogBody({
   const [previewOpen, setPreviewOpen] = useState(true);
   // 待替换的构图：AI 生成 / 模板导入 / 素材导入产出，已有内容时先确认
   const [pendingSpec, setPendingSpec] = useState<LayoutSpec | null>(null);
+  // 当前构图的来源素材（从素材库导入时记录，再次保存走更新而不是新建）
+  const [sourceAssetId, setSourceAssetId] = useState(initialAssetId || '');
+  const [pendingSourceAssetId, setPendingSourceAssetId] = useState('');
 
   const aspectRatio = spec.aspectRatio || defaultAspectRatio || '1:1';
 
@@ -142,15 +149,17 @@ function LayoutSpecDialogBody({
     setSpec((prev) => ({ ...prev, aspectRatio: next }));
   }, []);
 
-  /** 已有内容时先征求替换确认，空构图则直接应用 */
-  const applySpecOrConfirm = useCallback((next: LayoutSpec) => {
+  /** 已有内容时先征求替换确认，空构图则直接应用；fromAssetId 记录构图来源素材 */
+  const applySpecOrConfirm = useCallback((next: LayoutSpec, fromAssetId = '') => {
     if (isLayoutSpecEmpty(specRef.current)) {
       setSpec(next);
       setSelectedId('');
       setMode('sketch');
+      setSourceAssetId(fromAssetId);
       return;
     }
     setPendingSpec(next);
+    setPendingSourceAssetId(fromAssetId);
   }, []);
 
   const handleReplaceConfirm = useCallback(() => {
@@ -158,11 +167,13 @@ function LayoutSpecDialogBody({
     setSpec(pendingSpec);
     setSelectedId('');
     setMode('sketch');
+    setSourceAssetId(pendingSourceAssetId);
     setPendingSpec(null);
-  }, [pendingSpec]);
+  }, [pendingSourceAssetId, pendingSpec]);
 
   const handleReplaceCancel = useCallback(() => {
     setPendingSpec(null);
+    setPendingSourceAssetId('');
   }, []);
 
   const handleGenerate = useCallback(() => {
@@ -219,7 +230,7 @@ function LayoutSpecDialogBody({
       dispatchImageActionToast('该素材不是有效的构图规范', 'error');
       return;
     }
-    applySpecOrConfirm(parsed);
+    applySpecOrConfirm(parsed, asset.id);
   }, [applySpecOrConfirm]);
 
   const handleSaveAsset = useCallback(async () => {
@@ -227,17 +238,25 @@ function LayoutSpecDialogBody({
       dispatchImageActionToast('请先创建至少一个物体', 'error');
       return;
     }
+    const content = stringifyLayoutSpec(spec);
     try {
-      await addTextAsset({
-        content: stringifyLayoutSpec(spec),
+      if (sourceAssetId) {
+        // 来源素材还在：直接更新原素材内容，避免同一构图在素材库里堆出多份
+        await updateTextAssetContent(sourceAssetId, content);
+        dispatchImageActionToast('构图规范已更新到原素材', 'success');
+        return;
+      }
+      const saved = await addTextAsset({
+        content,
         sourceKind: 'layout',
         sourceLabel: '构图规范',
       });
+      setSourceAssetId(saved.id);
       dispatchImageActionToast('构图规范已保存到素材库', 'success');
     } catch (error) {
       dispatchImageActionToast(error instanceof Error ? error.message : '保存构图规范失败', 'error');
     }
-  }, [spec]);
+  }, [sourceAssetId, spec]);
 
   const handleConfirm = useCallback(() => {
     if (isLayoutSpecEmpty(spec)) {
@@ -445,7 +464,7 @@ function LayoutSpecDialogBody({
       <div className="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-3">
         <Button type="button" size="sm" variant="ghost" onClick={() => void handleSaveAsset()} disabled={empty}>
           <Save className="mr-1 size-3.5" />
-          存入素材库
+          {sourceAssetId ? '更新原素材' : '存入素材库'}
         </Button>
         <Button type="button" size="sm" variant="outline" onClick={onCancel}>
           取消
@@ -460,6 +479,7 @@ function LayoutSpecDialogBody({
         open={assetPickerOpen}
         onOpenChange={setAssetPickerOpen}
         onConfirm={handleAssetConfirm}
+        sourceKindFilter="layout"
       />
 
       {pendingSpec && (
@@ -482,6 +502,7 @@ export function LayoutSpecDialog({
   initialSpec,
   backgroundImageUrl,
   defaultAspectRatio,
+  initialAssetId,
   onConfirm,
 }: LayoutSpecDialogProps) {
   const handleConfirm = useCallback(
@@ -514,6 +535,7 @@ export function LayoutSpecDialog({
           initialSpec={initialSpec}
           backgroundImageUrl={backgroundImageUrl}
           defaultAspectRatio={defaultAspectRatio}
+          initialAssetId={initialAssetId}
           onConfirm={handleConfirm}
           onCancel={handleCancel}
         />

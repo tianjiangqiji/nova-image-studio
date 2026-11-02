@@ -1,3 +1,4 @@
+import type { LayoutSpec } from '@/lib/layout-spec';
 import type { GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
 import { makeStoredBlobRef, deleteStoredBlobs, type ImageDownloadProgressItem } from '@/lib/image-downloader';
 import { openImageDb, IMG_STORE } from '@/lib/image-db';
@@ -47,6 +48,8 @@ export interface StoredJob {
   serverTaskId?: string;
   serverTaskAcked?: boolean;
   refImages?: RefImageData[];
+  /** 提交时携带的构图规范，重试/恢复时带回编辑器继续修改 */
+  layoutSpec?: LayoutSpec;
   originalPrompt?: string;
   blobUrls?: string[];
   imageDownloadProgress?: ImageDownloadProgress;
