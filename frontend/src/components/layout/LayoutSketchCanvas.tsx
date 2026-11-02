@@ -12,28 +12,13 @@ import { cn } from '@/lib/utils';
 import {
   boxFromPoints,
   clampLayoutBox,
+  getLayoutBoxColor,
   moveLayoutBox,
   parseAspectRatioValue,
   resizeLayoutBox,
   type LayoutBox,
   type LayoutObject,
 } from '@/lib/layout-spec';
-
-/** 每个物体使用的描边色，按索引循环 */
-const BOX_COLORS = [
-  '#3b82f6',
-  '#f97316',
-  '#22c55e',
-  '#a855f7',
-  '#ef4444',
-  '#14b8a6',
-  '#eab308',
-  '#ec4899',
-] as const;
-
-export function getLayoutBoxColor(index: number): string {
-  return BOX_COLORS[index % BOX_COLORS.length];
-}
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4;

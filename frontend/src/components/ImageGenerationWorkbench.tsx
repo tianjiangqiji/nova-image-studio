@@ -16,8 +16,7 @@ import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
-import { composePromptWithLayout, isLayoutSpecEmpty, parseLayoutSpec, type LayoutSpec } from '@/lib/layout-spec';
-import { generateLayoutReferenceImage, type LayoutReferenceImage } from '@/lib/layout-reference-client';
+import { composePromptWithLayout, isLayoutSpecEmpty, parseLayoutSpec, renderLayoutReferenceImage, type LayoutSpec } from '@/lib/layout-spec';
 import { addTextAsset, getAssetBlob, type ImageAsset, type TextAsset } from '@/lib/asset-store';
 import { MODEL_IMAGE_LIMITS, MODEL_OPTIONS, type ModelId } from '@/lib/gemini-config';
 import {
@@ -66,16 +65,18 @@ interface UploadedFile {
   badge?: string;
 }
 
-/** 实时生成的构图参考图 → 待提交参考图条目（badge 标明来源，便于与手动上传区分） */
-function referenceToPendingFile(reference: LayoutReferenceImage): UploadedFile {
-  return {
-    id: reference.id,
-    name: reference.name,
-    preview: reference.dataUrl,
-    dataUrl: reference.dataUrl,
-    mimeType: reference.mimeType,
-    badge: reference.badge,
-  };
+/**
+ * 构图 JSON 实时渲染出的线框参考图（data URL）→ File。
+ * 参考图只是预览方块的本地成像，不走模型、不落素材库。
+ */
+function layoutSketchDataUrlToPngFile(dataUrl: string): File {
+  const base64 = dataUrl.split(',')[1] ?? '';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return new File([bytes], '构图参考图.png', { type: 'image/png' });
 }
 
 interface ImageGenerationWorkbenchProps {
@@ -172,8 +173,6 @@ export function ImageGenerationWorkbench({
   const [layoutDialogOpen, setLayoutDialogOpen] = useState(false);
   // 从素材库带进来的构图素材 id：构图弹窗「存入素材库」时回写原素材
   const [layoutSourceAssetId, setLayoutSourceAssetId] = useState('');
-  const [referenceGenerating, setReferenceGenerating] = useState(false);
-  const referenceAbortRef = useRef<AbortController | null>(null);
 
   const modelLimit = MODEL_IMAGE_LIMITS[model] || { max: getModelMaxRefImages(model), description: '最多 1 张参考图片' };
   const maxImages = modelLimit.max;
@@ -667,16 +666,15 @@ export function ImageGenerationWorkbench({
     onDraftConsumed?.();
   };
 
-  // 参考图实时生成：构图 JSON → 线框指令 → 文生图任务 → 落到待提交参考图，随后正常走图生图
-  useEffect(() => () => { referenceAbortRef.current?.abort(); }, []);
-
-  const handleGenerateReference = useCallback(() => {
-    if (referenceGenerating) {
-      referenceAbortRef.current?.abort();
-      return;
-    }
+  // 参考图实时生成：按构图 JSON 本地渲染预览同款线框方块图，直接作为图生图输入（不调模型、不落素材库）
+  const handleGenerateReference = useCallback(async () => {
     if (!layoutSpec || isLayoutSpecEmpty(layoutSpec)) {
       dispatchImageActionToast('请先在构图模式里画出至少一个物体', 'error');
+      return;
+    }
+    const dataUrl = renderLayoutReferenceImage(layoutSpec);
+    if (!dataUrl) {
+      dispatchImageActionToast('当前环境无法渲染参考图', 'error');
       return;
     }
 
@@ -703,34 +701,27 @@ export function ImageGenerationWorkbench({
       return;
     }
 
-    const controller = new AbortController();
-    referenceAbortRef.current = controller;
-    setReferenceGenerating(true);
     setUploadError(null);
-
-    void (async () => {
-      const reference = await generateLayoutReferenceImage({
-        spec: layoutSpec,
-        model: activeModel,
-        outputSize,
-        aspectRatio,
-        signal: controller.signal,
+    try {
+      const optimized = await prepareUploadImage(layoutSketchDataUrlToPngFile(dataUrl));
+      const incoming: UploadedFile = {
+        id: optimized.id,
+        name: '构图参考图.png',
+        preview: optimized.preview,
+        dataUrl: optimized.dataUrl,
+        mimeType: optimized.mimeType,
+        badge: '构图参考图',
+      };
+      setPendingFiles(prev => {
+        // 同一构图重复点击只换图不堆叠：先移除旧的构图参考图条目
+        const withoutPrev = prev.filter(file => file.badge !== '构图参考图');
+        return [incoming, ...withoutPrev].slice(0, activeMax);
       });
-      if (controller.signal.aborted) return;
-      setPendingFiles(prev => (prev.some(file => file.id === reference.id) ? prev : [referenceToPendingFile(reference), ...prev]));
-      dispatchImageActionToast('参考图已生成，将随本次提示词一起走图生图', 'success');
-    })().catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : '参考图生成失败';
-      if (message.includes('取消')) {
-        dispatchImageActionToast('已取消生成参考图', 'info');
-      } else {
-        dispatchImageActionToast(message, 'error');
-      }
-    }).finally(() => {
-      referenceAbortRef.current = null;
-      setReferenceGenerating(false);
-    });
-  }, [aspectRatio, gptImageAdvancedParams, layoutSpec, model, outputSize, pendingFiles.length, referenceGenerating]);
+      dispatchImageActionToast('参考图已按当前构图生成，将随本次提示词一起走图生图', 'success');
+    } catch {
+      dispatchImageActionToast('参考图渲染失败，请重试', 'error');
+    }
+  }, [aspectRatio, gptImageAdvancedParams, layoutSpec, model, outputSize, pendingFiles.length]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && e.shiftKey) {
@@ -867,11 +858,11 @@ export function ImageGenerationWorkbench({
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={handleGenerateReference}
+                onClick={() => void handleGenerateReference()}
                 disabled={!hasLayout || loading}
-                title={referenceGenerating ? '正在生成构图参考图，点击取消' : '按当前构图实时生成参考图（线框示意图 → 图生图输入）'}
+                title="按当前构图实时生成参考图（预览同款线框方块图 → 图生图输入）"
               >
-                {referenceGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Frame className="w-4 h-4" />}
+                <Frame className="w-4 h-4" />
               </Button>
               <Button variant="ghost" size="icon" onClick={handleOptimize} disabled={!prompt.trim()} title="优化提示词">
                 <Sparkles className="w-4 h-4" />

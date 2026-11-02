@@ -304,38 +304,76 @@ export function stringifyLayoutSpec(spec: LayoutSpec): string {
   );
 }
 
+/** 构图线框配色：预览、框选画布与实时参考图同源，按索引循环 */
+export const LAYOUT_BOX_COLORS = [
+  '#3b82f6',
+  '#f97316',
+  '#22c55e',
+  '#a855f7',
+  '#ef4444',
+  '#14b8a6',
+  '#eab308',
+  '#ec4899',
+] as const;
+
+export function getLayoutBoxColor(index: number): string {
+  return LAYOUT_BOX_COLORS[index % LAYOUT_BOX_COLORS.length];
+}
+
 /**
- * 生成「构图参考图」的绘图提示词：让模型画一张白底线框示意图，
- * 只表达位置与占比，不画实物。实时生成后作为图生图的参考图输入。
+ * 按构图 JSON 实时渲染线框参考图：白底 + 彩色包围盒 + 标签条，
+ * 与预览窗口的方块同款外观。生成结果直接作为图生图参考图输入，
+ * 本身不落库（落库的只有构图 JSON 素材）。无 canvas 环境返回 null。
  */
-export function buildLayoutSketchPrompt(spec: LayoutSpec): string {
-  if (isLayoutSpecEmpty(spec)) return '';
+export function renderLayoutReferenceImage(spec: LayoutSpec, maxSide = 1024): string | null {
+  if (isLayoutSpecEmpty(spec)) return null;
+  if (typeof document === 'undefined') return null;
 
-  const ratio = spec.aspectRatio || '1:1';
-  const lines: string[] = [
-    `请画一张构图布局示意图（wireframe layout sketch），画布比例 ${ratio}。`,
-    '要求：纯白背景，每个物体用一个细线矩形框表示，框内居中写上对应标签文字；只画框和文字，不要画任何实物、人物、产品或场景细节；整体像设计稿里的构图占位图。',
-    '物体位置与占比如下（百分比按画面宽高的相对区间）：',
-  ];
+  const ratio = parseAspectRatioValue(spec.aspectRatio);
+  const width = ratio >= 1 ? maxSide : Math.round(maxSide * ratio);
+  const height = ratio >= 1 ? Math.round(maxSide / ratio) : maxSide;
 
-  spec.objects.forEach((item, index) => {
-    lines.push(
-      `${index + 1}. 「${item.label}」：水平 ${formatRange(item.box.x, item.box.w)}，垂直 ${formatRange(item.box.y, item.box.h)}，${describeLayoutPosition(item.box)}，尺寸${describeLayoutSize(item.box)}`,
-    );
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, width, height);
+
+  const fontSize = Math.max(12, Math.round(width * 0.022));
+  const lineWidth = Math.max(2, Math.round(width * 0.004));
+
+  spec.objects.forEach((object, index) => {
+    const color = getLayoutBoxColor(index);
+    const x = Math.round(object.box.x * width);
+    const y = Math.round(object.box.y * height);
+    const w = Math.round(object.box.w * width);
+    const h = Math.round(object.box.h * height);
+
+    ctx.fillStyle = `${color}1a`;
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = lineWidth;
+    ctx.strokeRect(x, y, w, h);
+
+    // 标签条：左上角色块 + 白字，与预览一致
+    ctx.font = `${fontSize}px sans-serif`;
+    const textWidth = Math.ceil(ctx.measureText(object.label).width);
+    const barHeight = Math.round(fontSize * 1.5);
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, textWidth + fontSize, barHeight);
+    ctx.fillStyle = '#ffffff';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(object.label, x + Math.round(fontSize / 2), y + barHeight / 2);
   });
 
-  const labelById = new Map(spec.objects.map((item) => [item.id, item.label]));
-  const relationLines = spec.relations
-    .filter((relation) => labelById.has(relation.from) && labelById.has(relation.to))
-    .slice(0, MAX_RELATION_LINES)
-    .map((relation) => describeRelationLine(relation, labelById));
-
-  if (relationLines.length > 0) {
-    lines.push(`空间关系：${relationLines.join('；')}。`);
+  try {
+    return canvas.toDataURL('image/png');
+  } catch {
+    return null;
   }
-
-  lines.push('矩形框的边线用浅灰色 1px 细线，标签用深灰无衬线小字，不要添加阴影、渐变或装饰。');
-  return lines.join('\n');
 }
 
 

@@ -19,6 +19,7 @@ import { dispatchImageActionToast } from '@/lib/image-actions';
 import {
   createEmptyLayoutSpec,
   deriveLayoutRelations,
+  getLayoutBoxColor,
   isLayoutSpecEmpty,
   nextLayoutObjectId,
   nextLayoutLabel,
@@ -30,7 +31,7 @@ import {
 import { LAYOUT_TEMPLATES, type LayoutTemplate as LayoutTemplateItem } from '@/lib/layout-spec-templates';
 import { cn } from '@/lib/utils';
 
-import { getLayoutBoxColor, LayoutSketchCanvas, useLayoutDeleteKey } from './LayoutSketchCanvas';
+import { LayoutSketchCanvas, useLayoutDeleteKey } from './LayoutSketchCanvas';
 import { LayoutSpecPreview } from './LayoutSpecPreview';
 import {
   canGenerateLayoutSpec,

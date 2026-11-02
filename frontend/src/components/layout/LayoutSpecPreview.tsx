@@ -5,7 +5,7 @@
 import { cn } from '@/lib/utils';
 import { buildLayoutPromptSection, isLayoutSpecEmpty, parseAspectRatioValue, type LayoutSpec } from '@/lib/layout-spec';
 
-import { getLayoutBoxColor } from './LayoutSketchCanvas';
+import { getLayoutBoxColor } from '@/lib/layout-spec';
 
 interface LayoutSpecPreviewProps {
   spec: LayoutSpec;
