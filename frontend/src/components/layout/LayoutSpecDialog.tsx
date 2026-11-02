@@ -4,10 +4,11 @@
 // 三条产出路径共用同一份 LayoutSpec：AI 生成 / 图形化手动框选 / 内置模板 + 素材库导入。
 // 打开时通过 key 重建内部状态，避免在 effect 里同步 setState。
 
-import { useCallback, useRef, useState } from 'react';
-import { AlertCircle, Check, LayoutTemplate, Loader2, Plus, Save, Sparkles, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AlertCircle, Check, ChevronDown, ChevronUp, LayoutTemplate, Loader2, Plus, Save, Sparkles, Trash2 } from 'lucide-react';
 
 import { AgentTextAssetPickerDialog } from '@/components/agent/AgentAssetPickerDialog';
+import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
@@ -78,6 +79,8 @@ function LayoutSpecDialogBody({
   );
   const [spec, setSpec] = useState<LayoutSpec>(() => cloneSpec(initialSpec, defaultAspectRatio));
   const [selectedId, setSelectedId] = useState('');
+  // 供异步回调（AI onDone）读取最新构图，避免闭包捕获旧值
+  const specRef = useRef(spec);
 
   // AI 生成
   const [intent, setIntent] = useState('');
@@ -89,7 +92,16 @@ function LayoutSpecDialogBody({
   // 素材库
   const [assetPickerOpen, setAssetPickerOpen] = useState(false);
 
+  // 右上角悬浮预览窗（可折叠）
+  const [previewOpen, setPreviewOpen] = useState(true);
+  // 待替换的构图：AI 生成 / 模板导入 / 素材导入产出，已有内容时先确认
+  const [pendingSpec, setPendingSpec] = useState<LayoutSpec | null>(null);
+
   const aspectRatio = spec.aspectRatio || defaultAspectRatio || '1:1';
+
+  useEffect(() => {
+    specRef.current = spec;
+  }, [spec]);
 
   const setObjects = useCallback((objects: LayoutObject[]) => {
     setSpec((prev) => ({ ...prev, objects, relations: deriveLayoutRelations(objects) }));
@@ -130,6 +142,29 @@ function LayoutSpecDialogBody({
     setSpec((prev) => ({ ...prev, aspectRatio: next }));
   }, []);
 
+  /** 已有内容时先征求替换确认，空构图则直接应用 */
+  const applySpecOrConfirm = useCallback((next: LayoutSpec) => {
+    if (isLayoutSpecEmpty(specRef.current)) {
+      setSpec(next);
+      setSelectedId('');
+      setMode('sketch');
+      return;
+    }
+    setPendingSpec(next);
+  }, []);
+
+  const handleReplaceConfirm = useCallback(() => {
+    if (!pendingSpec) return;
+    setSpec(pendingSpec);
+    setSelectedId('');
+    setMode('sketch');
+    setPendingSpec(null);
+  }, [pendingSpec]);
+
+  const handleReplaceCancel = useCallback(() => {
+    setPendingSpec(null);
+  }, []);
+
   const handleGenerate = useCallback(() => {
     const trimmed = intent.trim();
     if (!trimmed || generating) return;
@@ -159,15 +194,14 @@ function LayoutSpecDialogBody({
           setGenerateError('AI 返回的内容不是合法的构图 JSON，可重试或改用手动框选。');
           return;
         }
-        setSpec({ ...parsed, aspectRatio: parsed.aspectRatio || aspectRatio });
-        setMode('sketch');
+        applySpecOrConfirm({ ...parsed, aspectRatio: parsed.aspectRatio || aspectRatio });
       },
       onError(err) {
         setGenerating(false);
         setGenerateError(err.message);
       },
     });
-  }, [aspectRatio, generating, intent]);
+  }, [applySpecOrConfirm, aspectRatio, generating, intent]);
 
   const handleGenerateCancel = useCallback(() => {
     generateHandleRef.current?.abort();
@@ -176,10 +210,8 @@ function LayoutSpecDialogBody({
   }, []);
 
   const handleApplyTemplate = useCallback((template: LayoutTemplateItem) => {
-    setSpec(cloneSpec(template.spec, aspectRatio));
-    setSelectedId('');
-    setMode('sketch');
-  }, [aspectRatio]);
+    applySpecOrConfirm(cloneSpec(template.spec, aspectRatio));
+  }, [applySpecOrConfirm, aspectRatio]);
 
   const handleAssetConfirm = useCallback((asset: TextAsset) => {
     const parsed = parseLayoutSpec(asset.content);
@@ -187,10 +219,8 @@ function LayoutSpecDialogBody({
       dispatchImageActionToast('该素材不是有效的构图规范', 'error');
       return;
     }
-    setSpec(parsed);
-    setSelectedId('');
-    setMode('sketch');
-  }, []);
+    applySpecOrConfirm(parsed);
+  }, [applySpecOrConfirm]);
 
   const handleSaveAsset = useCallback(async () => {
     if (isLayoutSpecEmpty(spec)) {
@@ -254,8 +284,14 @@ function LayoutSpecDialogBody({
           </TabsTrigger>
         </TabsList>
 
-        <div className="mt-3 grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto md:grid-cols-[1.15fr_0.85fr]">
-          <div className="min-h-0">
+        <div className="relative mt-3 flex min-h-0 flex-1">
+          <div
+            className={cn(
+              'flex min-h-0 flex-1 flex-col',
+              mode === 'sketch' ? 'overflow-hidden' : 'overflow-y-auto',
+              mode !== 'sketch' && previewOpen && 'md:pr-[21rem]',
+            )}
+          >
             <TabsContent value="ai" className="mt-0 flex flex-col gap-2">
               <Textarea
                 value={intent}
@@ -288,7 +324,7 @@ function LayoutSpecDialogBody({
               )}
             </TabsContent>
 
-            <TabsContent value="sketch" className="mt-0 flex flex-col gap-2">
+            <TabsContent value="sketch" className="mt-0 flex min-h-0 flex-1 flex-col gap-2">
               <LayoutSketchCanvas
                 objects={spec.objects}
                 aspectRatio={aspectRatio}
@@ -296,6 +332,7 @@ function LayoutSpecDialogBody({
                 selectedId={selectedId}
                 onChange={setObjects}
                 onSelect={setSelectedId}
+                className="min-h-0 flex-1"
               />
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Button type="button" size="xs" variant="outline" onClick={handleAddObject}>
@@ -303,7 +340,7 @@ function LayoutSpecDialogBody({
                   添加物体
                 </Button>
                 <span className="text-[11px] text-muted-foreground">
-                  拖拽空白处新建 · 拖拽框体移动 · 右下角缩放 · Delete 删除
+                  拖拽空白处新建 · 拖拽框体移动 · 右下角缩放 · Delete 删除 · 滚轮缩放 · Alt/中键或「平移」工具拖动画布
                 </span>
               </div>
             </TabsContent>
@@ -339,46 +376,68 @@ function LayoutSpecDialogBody({
             </TabsContent>
           </div>
 
-          <div className="flex min-h-0 flex-col gap-2">
-            <span className="text-xs text-muted-foreground">预览与提示词段落</span>
-            <LayoutSpecPreview spec={spec} />
+          {/* 右上角悬浮预览窗：默认展开，可折叠，不占用框选画布空间 */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-end px-1 md:inset-x-auto md:right-0 md:w-80">
+            <div className="pointer-events-auto flex max-h-[min(70dvh,32rem)] w-full flex-col overflow-hidden rounded-lg border border-border bg-popover/95 shadow-lg backdrop-blur-sm md:w-80">
+              <button
+                type="button"
+                onClick={() => setPreviewOpen((prev) => !prev)}
+                className="flex shrink-0 items-center justify-between gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-muted"
+                aria-expanded={previewOpen}
+              >
+                <span className="truncate text-xs font-medium text-muted-foreground">
+                  {!previewOpen && spec.objects.length > 0
+                    ? `预览 · ${spec.objects.length} 个物体`
+                    : '预览与提示词段落'}
+                </span>
+                {previewOpen
+                  ? <ChevronUp className="size-3.5 shrink-0 text-muted-foreground" />
+                  : <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />}
+              </button>
 
-            {spec.objects.length > 0 && (
-              <div className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">物体列表</span>
-                <div className="max-h-48 overflow-y-auto rounded-lg border border-border">
-                  {spec.objects.map((object, index) => (
-                    <div
-                      key={object.id}
-                      className={cn(
-                        'flex items-center gap-1.5 border-b border-border/60 px-2 py-1 last:border-b-0',
-                        object.id === selectedId ? 'bg-muted' : '',
-                      )}
-                      onClick={() => setSelectedId(object.id)}
-                    >
-                      <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: getLayoutBoxColor(index) }} />
-                      <Input
-                        value={object.label}
-                        onChange={(event) => handleRenameObject(object.id, event.target.value)}
-                        className="h-6 flex-1 rounded-md border border-transparent bg-transparent px-1 text-xs shadow-none transition-colors hover:border-input focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 md:text-xs"
-                      />
-                      <Button
-                        type="button"
-                        size="icon-xs"
-                        variant="ghost"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleDeleteObject(object.id);
-                        }}
-                        aria-label={`删除 ${object.label}`}
-                      >
-                        <Trash2 className="size-3" />
-                      </Button>
+              {previewOpen && (
+                <div className="min-h-0 flex-1 overflow-y-auto border-t border-border/60 p-2.5">
+                  <LayoutSpecPreview spec={spec} />
+
+                  {spec.objects.length > 0 && (
+                    <div className="mt-2 flex flex-col gap-1">
+                      <span className="text-xs text-muted-foreground">物体列表</span>
+                      <div className="max-h-40 overflow-y-auto rounded-lg border border-border">
+                        {spec.objects.map((object, index) => (
+                          <div
+                            key={object.id}
+                            className={cn(
+                              'flex items-center gap-1.5 border-b border-border/60 px-2 py-1 last:border-b-0',
+                              object.id === selectedId ? 'bg-muted' : '',
+                            )}
+                            onClick={() => setSelectedId(object.id)}
+                          >
+                            <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: getLayoutBoxColor(index) }} />
+                            <Input
+                              value={object.label}
+                              onChange={(event) => handleRenameObject(object.id, event.target.value)}
+                              className="h-6 flex-1 rounded-md border border-transparent bg-transparent px-1 text-xs shadow-none transition-colors hover:border-input focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40 md:text-xs"
+                            />
+                            <Button
+                              type="button"
+                              size="icon-xs"
+                              variant="ghost"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleDeleteObject(object.id);
+                              }}
+                              aria-label={`删除 ${object.label}`}
+                            >
+                              <Trash2 className="size-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                  ))}
+                  )}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
       </Tabs>
@@ -402,6 +461,17 @@ function LayoutSpecDialogBody({
         onOpenChange={setAssetPickerOpen}
         onConfirm={handleAssetConfirm}
       />
+
+      {pendingSpec && (
+        <ConfirmDialog
+          title="替换现有构图？"
+          message={`当前已有 ${spec.objects.length} 个物体，导入新构图会覆盖它们。`}
+          confirmText="替换"
+          cancelText="取消"
+          onConfirm={handleReplaceConfirm}
+          onCancel={handleReplaceCancel}
+        />
+      )}
     </>
   );
 }

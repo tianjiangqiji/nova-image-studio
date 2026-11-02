@@ -102,6 +102,7 @@ function normalizeDefaults(
     reversePrompt: completeTextModels.some((model) => model.id === defaults.reversePrompt) ? defaults.reversePrompt : firstTextModelId,
     agent: completeTextModels.some((model) => model.id === defaults.agent) ? defaults.agent : firstTextModelId,
     promptOptimize: completeTextModels.some((model) => model.id === defaults.promptOptimize) ? defaults.promptOptimize : firstTextModelId,
+    layoutSpec: completeTextModels.some((model) => model.id === defaults.layoutSpec) ? defaults.layoutSpec : firstTextModelId,
     imageDescribe: completeTextModels.some((model) => model.id === defaults.imageDescribe) ? defaults.imageDescribe : firstTextModelId,
     sliceDecomposition: completeTextModels.some((model) => model.id === defaults.sliceDecomposition) ? defaults.sliceDecomposition : firstTextModelId,
     sliceReconstruct: completeTextModels.some((model) => model.id === defaults.sliceReconstruct) ? defaults.sliceReconstruct : firstTextModelId,
@@ -388,6 +389,11 @@ export function SettingsModal({ isOpen, onClose, onApiKeyChange, initialTab = 'm
                 <div className="space-y-2">
                   <label className="text-xs text-muted-foreground">提示词优化默认模型</label>
                   <Select value={defaults.promptOptimize} onValueChange={(value) => setDefaults((prev) => ({ ...prev, promptOptimize: value }))} options={completeTextOptions} />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-xs text-muted-foreground">构图模式默认模型</label>
+                  <Select value={defaults.layoutSpec} onValueChange={(value) => setDefaults((prev) => ({ ...prev, layoutSpec: value }))} options={completeTextOptions} />
+                  <p className="text-[11px] text-muted-foreground">构图模式：按画面意图一次产出完整布局 JSON，建议用能力更强的模型</p>
                 </div>
                 <div className="space-y-2">
                   <label className="text-xs text-muted-foreground">图片描述默认模型</label>

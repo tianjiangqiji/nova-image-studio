@@ -71,6 +71,8 @@ export interface DefaultModels {
   reversePrompt: string;
   agent: string;
   promptOptimize: string;
+  /** 构图规范的 AI 生成 */
+  layoutSpec: string;
   imageDescribe: string;
   /** 图片切图的 AI 拆图（视觉定位切片与背景候选） */
   sliceDecomposition: string;
@@ -87,13 +89,14 @@ export interface DefaultModels {
 /** 文本类默认模型的 task key。 */
 export type TextDefaultTask = keyof Pick<
   DefaultModels,
-  'reversePrompt' | 'agent' | 'promptOptimize' | 'imageDescribe' | 'sliceDecomposition' | 'sliceReconstruct'
+  'reversePrompt' | 'agent' | 'promptOptimize' | 'layoutSpec' | 'imageDescribe' | 'sliceDecomposition' | 'sliceReconstruct'
 >;
 
 const TEXT_DEFAULT_TASKS: TextDefaultTask[] = [
   'reversePrompt',
   'agent',
   'promptOptimize',
+  'layoutSpec',
   'imageDescribe',
   'sliceDecomposition',
   'sliceReconstruct',
@@ -277,6 +280,7 @@ export const DEFAULT_DEFAULTS: DefaultModels = {
   reversePrompt: '',
   agent: '',
   promptOptimize: '',
+  layoutSpec: '',
   imageDescribe: '',
   sliceDecomposition: '',
   sliceReconstruct: '',

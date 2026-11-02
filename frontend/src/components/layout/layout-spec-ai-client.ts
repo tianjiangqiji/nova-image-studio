@@ -22,7 +22,7 @@ export const LAYOUT_SPEC_MISSING_KEY_MESSAGE = '请先在设置中完成默认�
 /** 是否具备调用 AI 生成构图的鉴权条件 */
 export function canGenerateLayoutSpec(): boolean {
   try {
-    requireDefaultConfiguredTextModel('promptOptimize');
+    requireDefaultConfiguredTextModel('layoutSpec');
     return true;
   } catch {
     return false;
@@ -35,7 +35,7 @@ export function generateLayoutSpec(
 ): LayoutSpecGenerateHandle {
   let textModel: ReturnType<typeof requireDefaultConfiguredTextModel>;
   try {
-    textModel = requireDefaultConfiguredTextModel('promptOptimize');
+    textModel = requireDefaultConfiguredTextModel('layoutSpec');
   } catch {
     callbacks.onError(new Error(LAYOUT_SPEC_MISSING_KEY_MESSAGE));
     return { abort: () => {}, promise: Promise.resolve() };
