@@ -17,6 +17,8 @@ import { CanvasZoomControls } from "./components/canvas-zoom-controls";
 import { CanvasToolbar } from "./components/canvas-toolbar";
 import { CanvasPromptGalleryImportDialog } from "./components/canvas-prompt-gallery-import-dialog";
 import { CanvasTemplateDialog, type CanvasTemplate } from "./components/canvas-template-dialog";
+import { LayoutSpecDialog } from "@/components/layout/LayoutSpecDialog";
+import { buildLayoutPromptSection, isLayoutSpecEmpty, type LayoutSpec } from "@/lib/layout-spec";
 import { CanvasContextMenu } from "./components/canvas-context-menu";
 import { CanvasConfigNodePanel } from "./components/canvas-config-node-panel";
 import { CanvasBatchGenerationDialog, CanvasGenerationPreviewDialog, type CanvasBatchPreviewItem, type CanvasVideoPreviewInfo } from "./components/canvas-generation-preview-dialog";
@@ -325,6 +327,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
   const [aiTextGenerated, setAiTextGenerated] = useState("");
   const [aiTextTargetNodeId, setAiTextTargetNodeId] = useState<string | null>(null);
   const [templateOpen, setTemplateOpen] = useState(false);
+  const [layoutOpen, setLayoutOpen] = useState(false);
   const [promptGalleryImporting, setPromptGalleryImporting] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 1280, height: 720 });
   const [miniMapOpen, setMiniMapOpen] = useState(false);
@@ -1050,6 +1053,52 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       setSelectedIds([configNode.id]);
       setTemplateOpen(false);
       showToast(`已导入模板：${template.title}`, "success");
+    },
+    [defaultConfig, pushHistory, showToast, viewportCenterWorld],
+  );
+
+  // 构图规范 → 文本节点（承载布局段落）+ 编排节点，与流程模板同一范式
+  const applyLayoutSpec = useCallback(
+    (spec: LayoutSpec) => {
+      if (isLayoutSpecEmpty(spec)) {
+        showToast("构图规范为空", "error");
+        return;
+      }
+      const center = viewportCenterWorld();
+      const textSpec = getNodeSpec(CanvasNodeType.Text);
+      const configSpec = getNodeSpec(CanvasNodeType.Config);
+      const gap = 80;
+
+      const textNode: CanvasNodeData = {
+        id: nanoid(),
+        type: CanvasNodeType.Text,
+        title: "构图规范",
+        position: { x: center.x - textSpec.width - gap / 2, y: center.y - textSpec.height / 2 },
+        width: textSpec.width,
+        height: textSpec.height,
+        metadata: { ...textSpec.metadata, content: buildLayoutPromptSection(spec) },
+      };
+
+      const composerContent = `参考提示词：@[node:${textNode.id}]`;
+      const configNode: CanvasNodeData = {
+        id: nanoid(),
+        type: CanvasNodeType.Config,
+        title: "构图生成配置",
+        position: { x: center.x + configSpec.width / 2 + gap / 2, y: center.y - configSpec.height / 2 },
+        width: configSpec.width,
+        height: configSpec.height,
+        metadata: { ...configSpec.metadata, genConfig: defaultConfig, composerContent },
+      };
+
+      const connection: CanvasConnection = { id: nanoid(), fromNodeId: textNode.id, toNodeId: configNode.id };
+
+      pushHistory();
+      setNodes((prev) => [...prev, textNode, configNode]);
+      setConnections((prev) => [...prev, connection]);
+      setSelectedConnectionId(null);
+      setSelectedIds([configNode.id]);
+      setLayoutOpen(false);
+      showToast(`已导入构图：${spec.objects.length} 个物体`, "success");
     },
     [defaultConfig, pushHistory, showToast, viewportCenterWorld],
   );
@@ -2790,6 +2839,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         onAddConfig={() => addNode(CanvasNodeType.Config)}
         onImportPromptGallery={() => setPromptGalleryOpen(true)}
         onOpenTemplate={() => setTemplateOpen(true)}
+        onOpenLayout={() => setLayoutOpen(true)}
         onUndo={undo}
         onRedo={redo}
         onDelete={() => selectedConnectionId ? deleteConnection(selectedConnectionId) : deleteNodes(selectedIds)}
@@ -2930,6 +2980,12 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
       <CanvasPromptGalleryImportDialog open={promptGalleryOpen} importing={promptGalleryImporting} onOpenChange={setPromptGalleryOpen} onConfirm={(prompt) => void importPromptGalleryTemplate(prompt)} />
 
       <CanvasTemplateDialog open={templateOpen} onOpenChange={setTemplateOpen} onConfirm={(template) => applyCanvasTemplate(template)} />
+
+      <LayoutSpecDialog
+        open={layoutOpen}
+        onOpenChange={setLayoutOpen}
+        onConfirm={applyLayoutSpec}
+      />
 
       <CanvasGenerationPreviewDialog
         open={Boolean(previewNode)}

@@ -13,7 +13,7 @@ const OPTIMIZE_MODEL = 'gpt-5.4-mini';
 const OPTIMIZE_TIMEOUT_MS = 30_000;
 const OPTIMIZE_MAX_ATTEMPTS = 2;
 
-export type PromptOptimizeMode = 'text-to-image' | 'image-to-image' | 'gif' | 'agent' | 'canvas-prompt-gallery-import' | 'canvas-prompt-gallery-config';
+export type PromptOptimizeMode = 'text-to-image' | 'image-to-image' | 'gif' | 'agent' | 'canvas-prompt-gallery-import' | 'canvas-prompt-gallery-config' | 'layout-spec';
 
 export interface OptimizeImageInput {
   dataUrl: string;
@@ -111,6 +111,25 @@ const SYSTEM_PROMPTS: Record<PromptOptimizeMode, string> = {
 - 不要让模板参考图之间互相模仿、互相替换或混合人物身份。
 - 使用简洁精准的中文。
 只输出改写后的提示词本身，不要输出解释、前缀、编号或额外说明。`,
+
+  'layout-spec': `你是一位专业的画面构图设计师。
+你的任务是把用户的画面意图拆解成可执行的构图规范（LayoutSpec JSON），用于后续按位置生成图片。
+
+坐标系统（严格遵守）：
+- 画面归一化为 0–1 的坐标系，原点在左上角。
+- x / y 是物体包围盒左上角坐标，w / h 是宽高，全部取值 0–1。
+- 必须满足 x + w <= 1 且 y + h <= 1。
+
+输出要求：
+- 只输出一个 JSON 对象，不要输出任何解释、标题、编号或 Markdown 代码围栏。
+- 顶层字段：version（固定为 1）、aspectRatio（画布比例，如 "1:1"、"16:9"、"3:4"）、objects（数组）。
+- objects 每项字段：id（形如 "obj_1"）、label（物体名称，简洁中文或用户原文）、box（含 x、y、w、h 四个数字）。
+- 物体数量控制在 2–6 个，只保留对画面结构有意义的元素。
+- 背景类元素（如桌面、墙面）可以作为物体列出，但通常应占据较大的包围盒。
+- 不要输出 relations 字段，程序会根据包围盒自动推导空间关系。
+
+参考输出：
+{"version":1,"aspectRatio":"16:9","objects":[{"id":"obj_1","label":"蓝色机器人","box":{"x":0.08,"y":0.12,"w":0.22,"h":0.55}},{"id":"obj_2","label":"橙色方块","box":{"x":0.4,"y":0.55,"w":0.15,"h":0.17}}]}`,
 };
 
 export function streamPromptOptimize(

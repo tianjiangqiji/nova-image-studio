@@ -8,6 +8,7 @@ export type AssetSourceKind =
   | 'gif'
   | 'upload'
   | 'random'
+  | 'layout'
   | 'prompt-gallery'
   | 'manual';
 
@@ -518,6 +519,7 @@ export function getSourceKindLabel(kind: AssetSourceKind): string {
     case 'gif': return 'GIF 工作流';
     case 'upload': return '用户上传';
     case 'random': return '随机图片';
+    case 'layout': return '构图规范';
     case 'prompt-gallery': return '提示词广场';
     case 'manual': return '手动导入';
     default: return '图片素材';

@@ -1,6 +1,6 @@
 "use client";
 
-import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, BetweenHorizontalStart, BetweenVerticalStart, CircleDot, Columns3, Film, Grid2x2, Hand, Image as ImageIcon, Info, LayoutDashboard, LibraryBig, MousePointer2, Music, Redo2, Rows3, Search, Settings2, SlidersHorizontal, Sparkles, Square, Trash2, Type, Undo2, Workflow } from "lucide-react";
+import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, BetweenHorizontalStart, BetweenVerticalStart, CircleDot, Columns3, Film, Grid2x2, Hand, Image as ImageIcon, Info, LayoutDashboard, LayoutTemplate, LibraryBig, MousePointer2, Music, Redo2, Rows3, Search, Settings2, SlidersHorizontal, Sparkles, Square, Trash2, Type, Undo2, Workflow } from "lucide-react";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -29,6 +29,7 @@ type CanvasToolbarProps = {
   onAddConfig: () => void;
   onImportPromptGallery: () => void;
   onOpenTemplate: () => void;
+  onOpenLayout: () => void;
   onUndo: () => void;
   onRedo: () => void;
   onDelete: () => void;
@@ -58,6 +59,7 @@ export function CanvasToolbar({
   onAddConfig,
   onImportPromptGallery,
   onOpenTemplate,
+  onOpenLayout,
   onUndo,
   onRedo,
   onDelete,
@@ -127,6 +129,11 @@ export function CanvasToolbar({
       <CanvasTooltip label="画布流程模板">
         <Button variant="ghost" size="icon-sm" onClick={onOpenTemplate} aria-label="画布流程模板">
           <LayoutDashboard className="size-4" />
+        </Button>
+      </CanvasTooltip>
+      <CanvasTooltip label="构图模式">
+        <Button variant="ghost" size="icon-sm" onClick={onOpenLayout} aria-label="构图模式">
+          <LayoutTemplate className="size-4" />
         </Button>
       </CanvasTooltip>
 

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, CloudUpload, FileText, ImagePlus, Info, Loader2, Save, Sparkles, X, Zap } from 'lucide-react';
+import { ArrowUp, CloudUpload, FileText, ImagePlus, Info, LayoutTemplate, Loader2, Save, Sparkles, X, Zap } from 'lucide-react';
 import { AttachmentChips } from './AttachmentChips';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -11,10 +11,12 @@ import { QuickPromptDialog } from '@/components/QuickPromptDialog';
 import { PromptOptimizeDialog } from '@/components/PromptOptimizeDialog';
 import { AgentAssetPickerDialog, AgentTextAssetPickerDialog } from '@/components/agent/AgentAssetPickerDialog';
 import { GenerationParamsBar, type GenerationParamsValue } from '@/components/GenerationParamsBar';
+import { LayoutSpecDialog } from '@/components/layout/LayoutSpecDialog';
 import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
+import { composePromptWithLayout, isLayoutSpecEmpty, type LayoutSpec } from '@/lib/layout-spec';
 import { addTextAsset, getAssetBlob, type ImageAsset, type TextAsset } from '@/lib/asset-store';
 import { MODEL_IMAGE_LIMITS, MODEL_OPTIONS, type ModelId } from '@/lib/gemini-config';
 import {
@@ -141,6 +143,9 @@ export function ImageGenerationWorkbench({
   const [optimizing, setOptimizing] = useState(false);
   const [optimizeError, setOptimizeError] = useState<string | null>(null);
   const optimizeHandleRef = useRef<StreamPromptOptimizeHandle | null>(null);
+
+  const [layoutSpec, setLayoutSpec] = useState<LayoutSpec | null>(null);
+  const [layoutDialogOpen, setLayoutDialogOpen] = useState(false);
 
   const modelLimit = MODEL_IMAGE_LIMITS[model] || { max: getModelMaxRefImages(model), description: '最多 1 张参考图片' };
   const maxImages = modelLimit.max;
@@ -546,10 +551,11 @@ export function ImageGenerationWorkbench({
   }, [applyTextAsset, prompt]);
 
   const handleSavePromptAsset = useCallback(async () => {
-    if (!prompt.trim()) return;
+    const content = composePromptWithLayout(prompt, layoutSpec);
+    if (!content.trim()) return;
     try {
       await addTextAsset({
-        content: prompt,
+        content,
         sourceKind: currentMode,
         sourceLabel: '生图工作台',
       });
@@ -557,15 +563,16 @@ export function ImageGenerationWorkbench({
     } catch (error) {
       dispatchImageActionToast(error instanceof Error ? error.message : '保存提示词素材失败', 'error');
     }
-  }, [currentMode, prompt]);
+  }, [currentMode, layoutSpec, prompt]);
 
   const handleSubmit = () => {
-    if (!prompt.trim() || disabled || loading) return;
+    const finalPrompt = composePromptWithLayout(prompt, layoutSpec);
+    if (!finalPrompt.trim() || disabled || loading) return;
 
     const modelWithBilling = model;
     if (pendingFiles.length > 0) {
       onSubmitImage({
-        prompt: prompt.trim(),
+        prompt: finalPrompt,
         files: pendingFiles,
         outputSize,
         customSize,
@@ -579,7 +586,7 @@ export function ImageGenerationWorkbench({
       });
     } else {
       onSubmitText({
-        prompts: [prompt.trim()],
+        prompts: [finalPrompt],
         outputSize,
         customSize,
         aspectRatio,
@@ -595,6 +602,7 @@ export function ImageGenerationWorkbench({
     setPendingFiles([]);
     setPrompt('');
     setUploadError(null);
+    setLayoutSpec(null);
     onDraftConsumed?.();
   };
 
@@ -602,6 +610,7 @@ export function ImageGenerationWorkbench({
     setPrompt('');
     setPendingFiles([]);
     setUploadError(null);
+    setLayoutSpec(null);
     onDraftConsumed?.();
   };
 
@@ -612,8 +621,9 @@ export function ImageGenerationWorkbench({
     }
   };
 
-  const canSubmit = prompt.trim().length > 0 && !disabled && !loading;
-  const canClear = prompt.trim().length > 0 || pendingFiles.length > 0;
+  const hasLayout = !isLayoutSpecEmpty(layoutSpec);
+  const canSubmit = (prompt.trim().length > 0 || hasLayout) && !disabled && !loading;
+  const canClear = prompt.trim().length > 0 || pendingFiles.length > 0 || hasLayout;
 
   return (
     <div ref={formRef} className="space-y-4">
@@ -725,8 +735,16 @@ export function ImageGenerationWorkbench({
               <Button variant="ghost" size="icon" onClick={() => setTextAssetPickerOpen(true)} title="导入提示词素材">
                 <FileText className="w-4 h-4" />
               </Button>
-              <Button variant="ghost" size="icon" onClick={() => void handleSavePromptAsset()} disabled={!prompt.trim()} title="存为提示词素材">
+              <Button variant="ghost" size="icon" onClick={() => void handleSavePromptAsset()} disabled={!prompt.trim() && !hasLayout} title="存为提示词素材">
                 <Save className="w-4 h-4" />
+              </Button>
+              <Button
+                variant={hasLayout ? 'default' : 'ghost'}
+                size="icon"
+                onClick={() => setLayoutDialogOpen(true)}
+                title={hasLayout ? `构图模式（已设 ${layoutSpec?.objects.length ?? 0} 个物体）` : '构图模式'}
+              >
+                <LayoutTemplate className="w-4 h-4" />
               </Button>
               <Button variant="ghost" size="icon" onClick={handleOptimize} disabled={!prompt.trim()} title="优化提示词">
                 <Sparkles className="w-4 h-4" />
@@ -775,6 +793,14 @@ export function ImageGenerationWorkbench({
         open={textAssetPickerOpen}
         onOpenChange={setTextAssetPickerOpen}
         onConfirm={handleTextAssetConfirm}
+      />
+      <LayoutSpecDialog
+        open={layoutDialogOpen}
+        onOpenChange={setLayoutDialogOpen}
+        initialSpec={layoutSpec}
+        defaultAspectRatio={aspectRatio}
+        backgroundImageUrl={pendingFiles[0]?.dataUrl}
+        onConfirm={setLayoutSpec}
       />
       {pendingTextAsset && createPortal(
         <ConfirmDialog
