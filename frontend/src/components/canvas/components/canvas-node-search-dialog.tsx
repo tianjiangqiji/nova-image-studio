@@ -53,5 +53,6 @@ function nodeTypeLabel(type: CanvasNodeType) {
   if (type === CanvasNodeType.Audio) return "音频";
   if (type === CanvasNodeType.Config) return "生成配置";
   if (type === CanvasNodeType.TextAnnotation) return "注释";
+  if (type === CanvasNodeType.LayoutCard) return "构图";
   return "文本";
 }

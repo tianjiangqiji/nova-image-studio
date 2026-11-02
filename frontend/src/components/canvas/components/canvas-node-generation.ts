@@ -1,5 +1,6 @@
 import { imageReferenceLabel } from "../lib/image-reference-prompt";
 import type { ReferenceImage } from "../types-media";
+import { buildLayoutPromptSection, isLayoutSpecEmpty, renderLayoutReferenceImage } from "@/lib/layout-spec";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
 import {
   enumeratePromptRoutes,
@@ -192,12 +193,32 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
 
 export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
   return getGenerationResourceNodes(nodeId, nodes, connections).flatMap((node): NodeGenerationInput[] => {
+    // 构图卡片：文字段落进提示词，卡片预览图作为图生图参考图，两者都由同一份 JSON 实时生成
+    if (node.type === CanvasNodeType.LayoutCard) return readLayoutCardInputs(node);
     const image = readReferenceImage(node);
     if (image) return [{ nodeId: node.id, type: "image" as const, title: node.title, image }];
     const text = readNodeTextInput(node);
     if (text) return [{ nodeId: node.id, type: "text" as const, title: node.title, text }];
     return [];
   });
+}
+
+function readLayoutCardInputs(node: CanvasNodeData): NodeGenerationInput[] {
+  const spec = node.metadata?.layoutSpec;
+  if (!spec || isLayoutSpecEmpty(spec)) return [];
+  const section = buildLayoutPromptSection(spec);
+  const referenceImage = renderLayoutReferenceImage(spec);
+  const inputs: NodeGenerationInput[] = [];
+  if (section) inputs.push({ nodeId: node.id, type: "text" as const, title: node.title, text: section });
+  if (referenceImage) {
+    inputs.push({
+      nodeId: node.id,
+      type: "image" as const,
+      title: node.title,
+      image: { id: node.id, name: `${node.title || node.id}.png`, type: "image/png", dataUrl: referenceImage },
+    });
+  }
+  return inputs;
 }
 
 export async function hydrateNodeGenerationContext(context: NodeGenerationContext) {

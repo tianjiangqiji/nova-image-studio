@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowUp, CloudUpload, FileText, Frame, ImagePlus, Info, LayoutTemplate, Loader2, Save, Sparkles, X, Zap } from 'lucide-react';
+import { ArrowUp, CloudUpload, FileText, ImagePlus, Info, LayoutTemplate, Loader2, Save, Sparkles, X, Zap } from 'lucide-react';
 import { AttachmentChips } from './AttachmentChips';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -16,7 +16,7 @@ import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
-import { composePromptWithLayout, isLayoutSpecEmpty, parseLayoutSpec, renderLayoutReferenceImage, type LayoutSpec } from '@/lib/layout-spec';
+import { composePromptWithLayout, isLayoutSpecEmpty, parseLayoutSpec, renderLayoutReferenceImage, stringifyLayoutSpec, type LayoutSpec } from '@/lib/layout-spec';
 import { addTextAsset, getAssetBlob, type ImageAsset, type TextAsset } from '@/lib/asset-store';
 import { MODEL_IMAGE_LIMITS, MODEL_OPTIONS, type ModelId } from '@/lib/gemini-config';
 import {
@@ -173,6 +173,8 @@ export function ImageGenerationWorkbench({
   const [layoutDialogOpen, setLayoutDialogOpen] = useState(false);
   // 从素材库带进来的构图素材 id：构图弹窗「存入素材库」时回写原素材
   const [layoutSourceAssetId, setLayoutSourceAssetId] = useState('');
+  // 已自动生成过参考图的构图签名，避免同一份构图重复渲染
+  const layoutReferenceSignatureRef = useRef('');
 
   const modelLimit = MODEL_IMAGE_LIMITS[model] || { max: getModelMaxRefImages(model), description: '最多 1 张参考图片' };
   const maxImages = modelLimit.max;
@@ -666,62 +668,78 @@ export function ImageGenerationWorkbench({
     onDraftConsumed?.();
   };
 
-  // 参考图实时生成：按构图 JSON 本地渲染预览同款线框方块图，直接作为图生图输入（不调模型、不落素材库）
-  const handleGenerateReference = useCallback(async () => {
-    if (!layoutSpec || isLayoutSpecEmpty(layoutSpec)) {
-      dispatchImageActionToast('请先在构图模式里画出至少一个物体', 'error');
-      return;
-    }
-    const dataUrl = renderLayoutReferenceImage(layoutSpec);
-    if (!dataUrl) {
-      dispatchImageActionToast('当前环境无法渲染参考图', 'error');
-      return;
-    }
-
-    // 参考图必须落在支持编辑的模型上：与 referenceDraft 消费同一套切换逻辑
-    let activeModel = model;
-    let activeMax = getModelMaxRefImages(model);
-    if (!supportsReferenceImages(activeModel) || activeMax <= 0) {
-      const switched = findReferenceCapableModel(model);
-      if (!switched) {
-        setUploadError('当前没有支持参考图的模型，请先在设置中配置可编辑模型');
+  // 构图 JSON → 预览同款线框方块图，作为图生图参考图（本地渲染，不调模型、不落素材库）
+  const applyLayoutReference = useCallback(
+    async (spec: LayoutSpec) => {
+      const dataUrl = renderLayoutReferenceImage(spec);
+      if (!dataUrl) {
+        dispatchImageActionToast('当前环境无法渲染参考图', 'error');
         return;
       }
-      activeModel = switched;
-      activeMax = getModelMaxRefImages(switched);
-      setModel(switched);
-      const sanitized = sanitizeLayoutForModel(switched, outputSize, aspectRatio);
-      setOutputSize(sanitized.outputSize);
-      setAspectRatio(sanitized.aspectRatio);
-      setGptImageAdvancedParams(getGptImageAdvancedParamsForModel(switched, gptImageAdvancedParams));
-      dispatchImageActionToast(`已切换到支持参考图的模型：${MODEL_OPTIONS.find((o) => o.value === switched)?.label || switched}`, 'info');
-    }
-    if (pendingFiles.length >= activeMax) {
-      setUploadError(`${MODEL_OPTIONS.find((o) => o.value === activeModel)?.label} 最多支持 ${activeMax} 张参考图，请先移除一张`);
+
+      // 参考图必须落在支持编辑的模型上：与 referenceDraft 消费同一套切换逻辑
+      let activeModel = model;
+      let activeMax = getModelMaxRefImages(model);
+      if (!supportsReferenceImages(activeModel) || activeMax <= 0) {
+        const switched = findReferenceCapableModel(model);
+        if (!switched) {
+          setUploadError('当前没有支持参考图的模型，请先在设置中配置可编辑模型');
+          return;
+        }
+        activeModel = switched;
+        activeMax = getModelMaxRefImages(switched);
+        setModel(switched);
+        const sanitized = sanitizeLayoutForModel(switched, outputSize, aspectRatio);
+        setOutputSize(sanitized.outputSize);
+        setAspectRatio(sanitized.aspectRatio);
+        setGptImageAdvancedParams(getGptImageAdvancedParamsForModel(switched, gptImageAdvancedParams));
+        dispatchImageActionToast(`已切换到支持参考图的模型：${MODEL_OPTIONS.find((o) => o.value === switched)?.label || switched}`, 'info');
+      }
+
+      setUploadError(null);
+      try {
+        const optimized = await prepareUploadImage(layoutSketchDataUrlToPngFile(dataUrl));
+        const incoming: UploadedFile = {
+          id: optimized.id,
+          name: '构图参考图.png',
+          preview: optimized.preview,
+          dataUrl: optimized.dataUrl,
+          mimeType: optimized.mimeType,
+          badge: '构图参考图',
+        };
+        setPendingFiles(prev => {
+          // 构图变化只换图不堆叠：先移除旧的构图参考图条目
+          const withoutPrev = prev.filter(file => file.badge !== '构图参考图');
+          return [incoming, ...withoutPrev].slice(0, activeMax);
+        });
+      } catch {
+        dispatchImageActionToast('参考图渲染失败，请重试', 'error');
+      }
+    },
+    [aspectRatio, gptImageAdvancedParams, model, outputSize],
+  );
+
+  // 构图确认后自动加入参考图，无需手动点击；同一份构图只生成一次
+  useEffect(() => {
+    if (!layoutSpec || isLayoutSpecEmpty(layoutSpec)) {
+      layoutReferenceSignatureRef.current = '';
       return;
     }
+    const signature = stringifyLayoutSpec(layoutSpec);
+    if (layoutReferenceSignatureRef.current === signature) return;
+    layoutReferenceSignatureRef.current = signature;
+    queueMicrotask(() => {
+      void applyLayoutReference(layoutSpec);
+    });
+  }, [applyLayoutReference, layoutSpec]);
 
-    setUploadError(null);
-    try {
-      const optimized = await prepareUploadImage(layoutSketchDataUrlToPngFile(dataUrl));
-      const incoming: UploadedFile = {
-        id: optimized.id,
-        name: '构图参考图.png',
-        preview: optimized.preview,
-        dataUrl: optimized.dataUrl,
-        mimeType: optimized.mimeType,
-        badge: '构图参考图',
-      };
-      setPendingFiles(prev => {
-        // 同一构图重复点击只换图不堆叠：先移除旧的构图参考图条目
-        const withoutPrev = prev.filter(file => file.badge !== '构图参考图');
-        return [incoming, ...withoutPrev].slice(0, activeMax);
-      });
-      dispatchImageActionToast('参考图已按当前构图生成，将随本次提示词一起走图生图', 'success');
-    } catch {
-      dispatchImageActionToast('参考图渲染失败，请重试', 'error');
-    }
-  }, [aspectRatio, gptImageAdvancedParams, layoutSpec, model, outputSize, pendingFiles.length]);
+  // 退出构图模式：清掉构图与其自动生成的参考图
+  const handleExitLayoutMode = useCallback(() => {
+    setLayoutSpec(null);
+    setLayoutSourceAssetId('');
+    setPendingFiles(prev => prev.filter(file => file.badge !== '构图参考图'));
+    dispatchImageActionToast('已退出构图模式', 'info');
+  }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && e.shiftKey) {
@@ -847,23 +865,34 @@ export function ImageGenerationWorkbench({
               <Button variant="ghost" size="icon" onClick={() => void handleSavePromptAsset()} disabled={!prompt.trim() && !hasLayout} title="存为提示词素材">
                 <Save className="w-4 h-4" />
               </Button>
-              <Button
-                variant={hasLayout ? 'default' : 'ghost'}
-                size="icon"
-                onClick={() => setLayoutDialogOpen(true)}
-                title={hasLayout ? `构图模式（已设 ${layoutSpec?.objects.length ?? 0} 个物体）` : '构图模式'}
+              <div
+                className={cn(
+                  'flex items-center rounded-md',
+                  hasLayout ? 'bg-primary text-primary-foreground' : 'bg-transparent',
+                )}
               >
-                <LayoutTemplate className="w-4 h-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => void handleGenerateReference()}
-                disabled={!hasLayout || loading}
-                title="按当前构图实时生成参考图（预览同款线框方块图 → 图生图输入）"
-              >
-                <Frame className="w-4 h-4" />
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={cn('gap-1.5', hasLayout && 'text-primary-foreground hover:bg-primary/85 hover:text-primary-foreground')}
+                  onClick={() => setLayoutDialogOpen(true)}
+                  title={hasLayout ? `构图模式（已设 ${layoutSpec?.objects.length ?? 0} 个物体）` : '构图模式'}
+                >
+                  <LayoutTemplate className="w-4 h-4" />
+                  <span className="text-xs">构图</span>
+                </Button>
+                {hasLayout && (
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="mr-0.5 text-primary-foreground hover:bg-primary/85 hover:text-primary-foreground"
+                    onClick={handleExitLayoutMode}
+                    title="退出构图模式"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                )}
+              </div>
               <Button variant="ghost" size="icon" onClick={handleOptimize} disabled={!prompt.trim()} title="优化提示词">
                 <Sparkles className="w-4 h-4" />
               </Button>

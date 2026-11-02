@@ -18,7 +18,7 @@ import { CanvasToolbar } from "./components/canvas-toolbar";
 import { CanvasPromptGalleryImportDialog } from "./components/canvas-prompt-gallery-import-dialog";
 import { CanvasTemplateDialog, type CanvasTemplate } from "./components/canvas-template-dialog";
 import { LayoutSpecDialog } from "@/components/layout/LayoutSpecDialog";
-import { buildLayoutPromptSection, isLayoutSpecEmpty, type LayoutSpec } from "@/lib/layout-spec";
+import { isLayoutSpecEmpty, type LayoutSpec } from "@/lib/layout-spec";
 import { CanvasContextMenu } from "./components/canvas-context-menu";
 import { CanvasConfigNodePanel } from "./components/canvas-config-node-panel";
 import { CanvasBatchGenerationDialog, CanvasGenerationPreviewDialog, type CanvasBatchPreviewItem, type CanvasVideoPreviewInfo } from "./components/canvas-generation-preview-dialog";
@@ -637,6 +637,11 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
 
   const addNode = useCallback(
     (type: CanvasNodeType, position?: Position) => {
+      // 构图卡片不接受空节点：直接打开构图编辑器，画好后自动生成卡片
+      if (type === CanvasNodeType.LayoutCard) {
+        setLayoutOpen(true);
+        return;
+      }
       pushHistory();
       const spec = getNodeSpec(type);
       const center = position ?? viewportCenterWorld();
@@ -1057,7 +1062,7 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
     [defaultConfig, pushHistory, showToast, viewportCenterWorld],
   );
 
-  // 构图规范 → 文本节点（承载布局段落）+ 编排节点，与流程模板同一范式
+  // 构图规范 → 构图卡片（承载 JSON，预览图与文字段落实时生成）+ 编排节点
   const applyLayoutSpec = useCallback(
     (spec: LayoutSpec) => {
       if (isLayoutSpecEmpty(spec)) {
@@ -1065,21 +1070,21 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         return;
       }
       const center = viewportCenterWorld();
-      const textSpec = getNodeSpec(CanvasNodeType.Text);
+      const cardSpec = getNodeSpec(CanvasNodeType.LayoutCard);
       const configSpec = getNodeSpec(CanvasNodeType.Config);
       const gap = 80;
 
-      const textNode: CanvasNodeData = {
+      const cardNode: CanvasNodeData = {
         id: nanoid(),
-        type: CanvasNodeType.Text,
-        title: "构图规范",
-        position: { x: center.x - textSpec.width - gap / 2, y: center.y - textSpec.height / 2 },
-        width: textSpec.width,
-        height: textSpec.height,
-        metadata: { ...textSpec.metadata, content: buildLayoutPromptSection(spec) },
+        type: CanvasNodeType.LayoutCard,
+        title: "构图",
+        position: { x: center.x - cardSpec.width - gap / 2, y: center.y - cardSpec.height / 2 },
+        width: cardSpec.width,
+        height: cardSpec.height,
+        metadata: { ...cardSpec.metadata, layoutSpec: spec },
       };
 
-      const composerContent = `参考提示词：@[node:${textNode.id}]`;
+      const composerContent = `参考构图：@[node:${cardNode.id}]`;
       const configNode: CanvasNodeData = {
         id: nanoid(),
         type: CanvasNodeType.Config,
@@ -1090,10 +1095,10 @@ export function CanvasEditor({ projectId, onBack, onRequireApiKey, showToast, sh
         metadata: { ...configSpec.metadata, genConfig: defaultConfig, composerContent },
       };
 
-      const connection: CanvasConnection = { id: nanoid(), fromNodeId: textNode.id, toNodeId: configNode.id };
+      const connection: CanvasConnection = { id: nanoid(), fromNodeId: cardNode.id, toNodeId: configNode.id };
 
       pushHistory();
-      setNodes((prev) => [...prev, textNode, configNode]);
+      setNodes((prev) => [...prev, cardNode, configNode]);
       setConnections((prev) => [...prev, connection]);
       setSelectedConnectionId(null);
       setSelectedIds([configNode.id]);

@@ -1,4 +1,5 @@
 import { imageReferenceLabel } from "../lib/image-reference-prompt";
+import { buildLayoutPromptSection } from "@/lib/layout-spec";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../types";
 
 export type CanvasResourceKind = "image" | "text";
@@ -89,11 +90,19 @@ function labelResourceNodes(nodes: CanvasNodeData[], active: boolean, imageUrls?
         label,
         title: node.title || label,
         previewUrl: kind === "image" ? (resolvedImage || node.metadata?.content) : undefined,
-        text: node.type === CanvasNodeType.Text ? node.metadata?.content || node.metadata?.prompt : undefined,
+        text: nodeTextForReference(node),
         active,
       },
     ];
   });
+}
+
+function nodeTextForReference(node: CanvasNodeData) {
+  if (node.type === CanvasNodeType.LayoutCard) {
+    return node.metadata?.layoutSpec ? buildLayoutPromptSection(node.metadata.layoutSpec) : undefined;
+  }
+  if (node.type === CanvasNodeType.Text) return node.metadata?.content || node.metadata?.prompt;
+  return undefined;
 }
 
 function labelForKind(kind: CanvasResourceKind, index: number) {
@@ -108,6 +117,8 @@ function isResourceNode(node: CanvasNodeData) {
 function resourceKind(node: CanvasNodeData): CanvasResourceKind | null {
   if (node.type === CanvasNodeType.Image && (node.metadata?.content || node.metadata?.storageKey)) return "image";
   if (node.type === CanvasNodeType.Image && node.metadata?.canvasRole === "target") return "image";
+  // 构图卡片按文本资源引用：@ 到编排节点时拼进提示词的是构图段落（图片参考由生成上下文另行提供）
+  if (node.type === CanvasNodeType.LayoutCard) return node.metadata?.layoutSpec ? "text" : null;
   if (node.type === CanvasNodeType.Text && (node.metadata?.content || node.metadata?.prompt)) return "text";
   return null;
 }

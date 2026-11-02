@@ -15,6 +15,7 @@ export const NODE_DEFAULT_SIZE = {
   [CanvasNodeType.Text]: { width: 340, height: 200, title: "文本" },
   [CanvasNodeType.Config]: { width: 380, height: 440, title: "编排节点" },
   [CanvasNodeType.TextAnnotation]: { width: 240, height: 160, title: "注释" },
+  [CanvasNodeType.LayoutCard]: { width: 360, height: 280, title: "构图" },
 } satisfies Record<CanvasNodeType, { width: number; height: number; title: string }>;
 
 export const NODE_SPECS = {
@@ -41,6 +42,10 @@ export const NODE_SPECS = {
   [CanvasNodeType.TextAnnotation]: {
     ...NODE_DEFAULT_SIZE[CanvasNodeType.TextAnnotation],
     metadata: { content: "", status: "idle", fontSize: 14 },
+  },
+  [CanvasNodeType.LayoutCard]: {
+    ...NODE_DEFAULT_SIZE[CanvasNodeType.LayoutCard],
+    metadata: { content: "", status: "idle" },
   },
 } satisfies Record<CanvasNodeType, CanvasNodeSpec>;
 

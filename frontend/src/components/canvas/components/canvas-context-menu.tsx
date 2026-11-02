@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { createPortal } from "react-dom";
-import { ClipboardCopy, Copy, Crop, Eraser, FileText, Film, Grid3x3, Image as ImageIcon, Maximize2, Music, PaintBucket, RefreshCw, Rotate3d, Settings2, Sparkles, Square, Text, Trash2, Type, Upload } from "lucide-react";
+import { ClipboardCopy, Copy, Crop, Eraser, FileText, Film, Grid3x3, Image as ImageIcon, LayoutTemplate, Maximize2, Music, PaintBucket, RefreshCw, Rotate3d, Settings2, Sparkles, Square, Text, Trash2, Type, Upload } from "lucide-react";
 
 import { CanvasNodeType, type CanvasNodeData, type ContextMenuState } from "../types";
 
@@ -63,6 +63,7 @@ export function CanvasContextMenu({ state, node, onClose, actions }: { state: Co
     items.push({ label: "文本", icon: <FileText className="size-4" />, onClick: () => actions.onConnectionCreate?.(CanvasNodeType.Text) });
     items.push({ label: "注释", icon: <Square className="size-4" />, onClick: () => actions.onConnectionCreate?.(CanvasNodeType.TextAnnotation) });
     items.push({ label: "编排", icon: <Settings2 className="size-4" />, onClick: () => actions.onConnectionCreate?.(CanvasNodeType.Config) });
+    items.push({ label: "构图", icon: <LayoutTemplate className="size-4" />, onClick: () => actions.onConnectionCreate?.(CanvasNodeType.LayoutCard) });
   } else if (state.type === "canvas") {
     items.push({ label: "在此添加图片节点", icon: <ImageIcon className="size-4" />, onClick: () => actions.onAddNodeAt?.(CanvasNodeType.Image) });
     items.push({ label: "在此添加视频节点", icon: <Film className="size-4" />, onClick: () => actions.onAddNodeAt?.(CanvasNodeType.Video) });

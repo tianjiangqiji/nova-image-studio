@@ -1,6 +1,7 @@
 import type { AspectRatio, OutputSize } from "@/lib/gemini-config";
 import type { GptImageBackground, GptImageQuality, GptImageStyle, ParallelCount } from "@/lib/model-capabilities";
 import type { FacetValues, FieldValues } from "@/lib/plugin-schema";
+import type { LayoutSpec } from "@/lib/layout-spec";
 
 export type Position = {
   x: number;
@@ -20,6 +21,8 @@ export enum CanvasNodeType {
   Text = "text",
   Config = "config",
   TextAnnotation = "textAnnotation",
+  /** 构图卡片：承载 LayoutSpec，卡片内可切换预览图 / JSON / 文字段落 */
+  LayoutCard = "layoutCard",
 }
 
 export type CanvasNodeStatus = "idle" | "success" | "loading" | "uploading" | "submitting" | "queued" | "processing" | "error";
@@ -125,6 +128,8 @@ export type CanvasNodeMetadata = {
   backgroundColor?: string;
   /** TextAnnotation 节点：文字颜色 */
   textColor?: string;
+  /** LayoutCard 节点：构图规范（卡片内 JSON/文字/预览图都由它实时生成） */
+  layoutSpec?: LayoutSpec;
 };
 
 export type CanvasNodeData = {

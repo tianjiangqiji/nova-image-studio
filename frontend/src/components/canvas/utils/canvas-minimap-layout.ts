@@ -52,5 +52,6 @@ export function nodeMinimapColor(type: CanvasNodeType, fallback: string): string
   if (type === CanvasNodeType.Config) return "#60a5fa";
   if (type === CanvasNodeType.Video) return "#a78bfa";
   if (type === CanvasNodeType.Audio) return "#f59e0b";
+  if (type === CanvasNodeType.LayoutCard) return "#f472b6";
   return fallback;
 }

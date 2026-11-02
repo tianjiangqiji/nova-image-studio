@@ -9,6 +9,7 @@ import { formatBytes } from "../lib/image-utils";
 import { CanvasNodeType, type CanvasNodeData } from "../types";
 import { NodeProgressOverlay } from "./canvas-node-progress-overlay";
 import { Spinner } from "./canvas-ui";
+import { CanvasLayoutCardBody } from "./canvas-layout-card";
 import { TextAnnotationNodeBody } from "./canvas-node-text-annotation";
 
 export type ResizeCorner = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -160,6 +161,8 @@ export const CanvasNode = React.memo(function CanvasNode({
             <TextNodeBody data={data} onContentChange={onContentChange} onSelectNode={onSelectNode} onImportTextToNode={onImportTextToNode} onSaveTextToAssets={onSaveTextToAssets} onAiGenerate={onAiGenerate} onToggleRenderMode={onToggleRenderMode} />
           ) : data.type === CanvasNodeType.TextAnnotation ? (
             <TextAnnotationNodeBody data={data} onContentChange={onContentChange} onSelectNode={onSelectNode} />
+          ) : data.type === CanvasNodeType.LayoutCard ? (
+            <CanvasLayoutCardBody data={data} onSelectNode={onSelectNode} />
           ) : (
             <div className="h-full w-full" data-canvas-no-zoom>
               {renderPanel?.(data, () => onSelectNode(data.id))}
