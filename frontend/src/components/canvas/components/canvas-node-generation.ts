@@ -140,12 +140,20 @@ function buildRouteGenerationContext(
 }
 
 function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: string): NodeGenerationContext {
-  const inputByNodeId = new Map(inputs.map((input) => [input.nodeId, input]));
+  // 一个节点可能同时提供文本与图片（构图卡片就是），按 nodeId 聚合，不能只留最后一条
+  const inputsByNodeId = new Map<string, NodeGenerationInput[]>();
+  for (const input of inputs) {
+    const list = inputsByNodeId.get(input.nodeId);
+    if (list) list.push(input);
+    else inputsByNodeId.set(input.nodeId, [input]);
+  }
   const selectedInputs = inputs.filter((input) => input.type === "image");
   const labelByNodeId = new Map<string, string>();
   const textBlocks: string[] = [];
   const counts = { image: selectedInputs.length, text: 0 };
-  selectedInputs.forEach((input, index) => labelByNodeId.set(input.nodeId, generationLabel("image", index)));
+  // 同一节点可能同时贡献文本与图片（构图卡片），label 按节点+类型区分，避免互相覆盖
+  const labelKey = (input: NodeGenerationInput) => `${input.nodeId}:${input.type}`;
+  selectedInputs.forEach((input, index) => labelByNodeId.set(labelKey(input), generationLabel("image", index)));
   let hasToken = false;
   let lastIndex = 0;
   let nextPrompt = "";
@@ -154,16 +162,18 @@ function buildComposerGenerationContext(inputs: NodeGenerationInput[], prompt: s
     if (match.index === undefined) continue;
     hasToken = true;
     nextPrompt += prompt.slice(lastIndex, match.index);
-    const input = inputByNodeId.get(match[1]);
-    if (input) {
-      let label = labelByNodeId.get(input.nodeId);
-      if (!label) {
-        label = generationLabel(input.type, counts[input.type]++);
-        labelByNodeId.set(input.nodeId, label);
-        if (input.type === "text") textBlocks.push(`【${label}】\n${input.text || ""}`);
-        else selectedInputs.push(input);
+    const matched = inputsByNodeId.get(match[1]);
+    if (matched) {
+      for (const input of matched) {
+        let label = labelByNodeId.get(labelKey(input));
+        if (!label) {
+          label = generationLabel(input.type, counts[input.type]++);
+          labelByNodeId.set(labelKey(input), label);
+          if (input.type === "text") textBlocks.push(`【${label}】\n${input.text || ""}`);
+          else selectedInputs.push(input);
+        }
+        nextPrompt += input.type === "text" ? `【${label}】` : label;
       }
-      nextPrompt += input.type === "text" ? `【${label}】` : label;
     }
     lastIndex = match.index + match[0].length;
   }

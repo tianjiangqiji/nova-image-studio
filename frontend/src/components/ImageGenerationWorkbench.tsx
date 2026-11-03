@@ -16,7 +16,7 @@ import { ConfirmDialog } from '@/components/workspace/dialogs/ConfirmDialog';
 import { streamPromptOptimize, type StreamPromptOptimizeHandle } from '@/lib/prompt-optimize-client';
 import { loadJsonFromStorage, saveJsonToStorage } from '@/lib/settings-storage';
 import { requireDefaultConfiguredTextModel } from '@/lib/model-endpoints';
-import { composePromptWithLayout, isLayoutSpecEmpty, parseLayoutSpec, renderLayoutReferenceImage, stringifyLayoutSpec, type LayoutSpec } from '@/lib/layout-spec';
+import { composePromptWithLayout, isLayoutSpecEmpty, parseLayoutSpec, renderLayoutReferenceImage, stringifyLayoutSpec, stripLayoutSection, type LayoutSpec } from '@/lib/layout-spec';
 import { addTextAsset, getAssetBlob, type ImageAsset, type TextAsset } from '@/lib/asset-store';
 import { MODEL_IMAGE_LIMITS, MODEL_OPTIONS, type ModelId } from '@/lib/gemini-config';
 import {
@@ -252,7 +252,9 @@ export function ImageGenerationWorkbench({
       setGptImageAdvancedParams(nextAdvancedParams);
       setParallelCount(nextParallelCount);
       if (useInitial) {
-        setPrompt(initialData?.prompt || '');
+        // 任务里存的提示词已含构图段落，恢复时剥掉，避免再次提交时重复拼接
+        const restoredPrompt = initialData?.layoutSpec ? stripLayoutSection(initialData.prompt || '') : (initialData?.prompt || '');
+        setPrompt(restoredPrompt);
         setLayoutSpec(initialData?.layoutSpec || null);
         setPendingFiles((initialData?.refImages || []).map(img => ({
           id: img.id,

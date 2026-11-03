@@ -1,7 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "../../types";
-import { buildNodeGenerationContext } from "../canvas-node-generation";
+
+// jsdom 没有 canvas 2D 后端，线框图渲染固定返回一张占位 PNG；
+// 其余 layout-spec 能力保持真实实现，只验证「文字段落 + 参考图」是否同时注入。
+vi.mock("@/lib/layout-spec", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/layout-spec")>("@/lib/layout-spec");
+  return {
+    ...actual,
+    renderLayoutReferenceImage: vi.fn(() => "data:image/png;base64,c3R1Yg=="),
+  };
+});
+
+const { buildNodeGenerationContext, buildNodeGenerationInputs } = await import("../canvas-node-generation");
+const { createEmptyLayoutSpec } = await import("@/lib/layout-spec");
+type LayoutSpec = import("@/lib/layout-spec").LayoutSpec;
 
 function node(
   id: string,
@@ -131,5 +144,44 @@ describe("buildNodeGenerationContext prompt routes", () => {
 
     expect(context.referenceImages.map((image) => image.id)).toEqual(["generated"]);
     expect(context.imageCount).toBe(1);
+  });
+});
+
+const layoutSpec: LayoutSpec = {
+  version: 1,
+  aspectRatio: "1:1",
+  objects: [
+    { id: "obj_1", label: "蓝色机器人", box: { x: 0.08, y: 0.12, w: 0.22, h: 0.55 } },
+    { id: "obj_2", label: "橙色方块", box: { x: 0.6, y: 0.2, w: 0.2, h: 0.3 } },
+  ],
+  relations: [{ from: "obj_1", type: "left-of", to: "obj_2" }],
+};
+
+describe("构图卡片生成输入", () => {
+  it("同一节点同时贡献文字段落与参考图，缺一不可", () => {
+    const nodes = [
+      node("card", CanvasNodeType.LayoutCard, "构图", { layoutSpec }),
+      node("config", CanvasNodeType.Config, "构图生成配置", { composerContent: "参考构图：@[node:card]" }),
+    ];
+    const connections = [edge("card-config", "card", "config")];
+
+    const inputs = buildNodeGenerationInputs("config", nodes, connections);
+    expect(inputs.filter((input) => input.type === "text")).toHaveLength(1);
+    expect(inputs.filter((input) => input.type === "image")).toHaveLength(1);
+
+    const context = buildNodeGenerationContext("config", nodes, connections, "参考构图：@[node:card]");
+    expect(context.prompt).toContain("【构图规范 v1】");
+    expect(context.prompt).toContain("蓝色机器人");
+    expect(context.textCount).toBe(1);
+    expect(context.imageCount).toBe(1);
+    expect(context.referenceImages).toHaveLength(1);
+  });
+
+  it("空构图不产生输入", () => {
+    const nodes = [
+      node("card", CanvasNodeType.LayoutCard, "构图", { layoutSpec: createEmptyLayoutSpec("1:1") }),
+      node("config", CanvasNodeType.Config, "配置", { composerContent: "@[node:card]" }),
+    ];
+    expect(buildNodeGenerationInputs("config", nodes, [edge("card-config", "card", "config")])).toEqual([]);
   });
 });
