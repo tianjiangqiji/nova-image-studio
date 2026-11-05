@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createNovaTask, getNovaTask, ackNovaTask, resolveImageTaskProvider, type ImageReference } from '@/lib/ccode-task-client';
 import { novaTaskSocket } from '@/lib/ccode-task-socket';
+import { resolveImagePayloadToBlob } from '@/lib/image-actions';
+import { buildNativeGifPrompt, inspectNativeGif } from '@/lib/native-gif';
 import { generateUUID } from '@/lib/uuid';
 import {
   downloadAndStoreImages,
@@ -26,12 +28,14 @@ import { buildGifPrompt } from '@/lib/gif-prompt';
 import { encodeGifFromGrid, encodeFramesToGif, triggerGifDownload } from '@/lib/gif-encoder';
 import {
   getGptImageAdvancedParamsForModel,
+  supportsNativeImageOutput,
   type GptImageBackground,
   type GptImageQuality,
   type GptImageStyle,
 } from '@/lib/model-capabilities';
 
 export interface SubmitInput {
+  nativeGif?: boolean;
   prompt: string;
   loop: boolean;
   closedLoop: boolean;
@@ -93,6 +97,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
   const jobRef = useRef<ActiveGifJob | null>(null);
   const subscriptionRef = useRef<(() => void) | null>(null);
   const resolvedBlobUrlsRef = useRef<string[]>([]);
+  const finalizingRef = useRef(new Set<string>());
 
   const persistJob = useCallback((next: ActiveGifJob | null) => {
     jobRef.current = next;
@@ -135,57 +140,87 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     return ref;
   }, []);
 
+  const restoreNativeResult = useCallback(async (target: ActiveGifJob, url: string) => {
+    const blob = await resolveImagePayloadToBlob({ src: url, sourceKind: 'gif' });
+    const info = await inspectNativeGif(blob);
+    if (jobRef.current?.id !== target.id) return;
+    setGifBlob(info.frameCount ? blob : null);
+    updateJob(prev => ({ ...prev, resultMimeType: info.mimeType, resultFrameCount: info.frameCount, warning: info.warning }));
+  }, [updateJob]);
+
   const finalizeGrid = useCallback(async (
     target: ActiveGifJob,
     images: string[],
     serverTaskId: string,
   ): Promise<void> => {
-    const first = images[0];
-    if (!first) {
-      persistJob({
-        ...target,
-        status: 'failed',
-        error: '后端返回的图片为空',
-        updatedAt: nowIso(),
-      });
-      return;
-    }
-
-    let nextRef = first;
-    let immediateBlobUrl: string | null = null;
-    if (first.startsWith('URL:')) {
-      try {
-        const result = await downloadAndStoreImages(target.id, [first]);
-        // 优先使用 downloadAndStoreImages 返回的 blobUrl，避免 IndexedDB 时序竞争
-        if (result.successCount > 0 && result.blobUrls[0]) {
-          immediateBlobUrl = result.blobUrls[0];
-          nextRef = makeStoredBlobRef(target.id, 0);
-        }
-      } catch {
-        // 下载失败：保留 URL: 引用，仍可走 HTTP 渲染
+    if (finalizingRef.current.has(serverTaskId) || jobRef.current?.id !== target.id) return;
+    finalizingRef.current.add(serverTaskId);
+    try {
+      const first = images[0];
+      if (!first) {
+        persistJob({
+          ...target,
+          status: 'failed',
+          error: '后端返回的图片为空',
+          updatedAt: nowIso(),
+        });
+        return;
       }
+
+      let nextRef = first;
+      let immediateBlobUrl: string | null = null;
+      if (first.startsWith('URL:')) {
+        try {
+          const result = await downloadAndStoreImages(target.id, [first]);
+          // 优先使用 downloadAndStoreImages 返回的 blobUrl，避免 IndexedDB 时序竞争
+          if (result.successCount > 0 && result.blobUrls[0]) {
+            immediateBlobUrl = result.blobUrls[0];
+            nextRef = makeStoredBlobRef(target.id, 0);
+          }
+        } catch {
+          // 下载失败：保留 URL: 引用，仍可走 HTTP 渲染
+        }
+      }
+
+      const completed: ActiveGifJob = {
+        ...target,
+        status: target.nativeGif ? 'done' : 'review_grid',
+        gridImageRef: nextRef,
+        error: undefined,
+        updatedAt: nowIso(),
+      };
+      if (jobRef.current?.id !== target.id) {
+        if (immediateBlobUrl) URL.revokeObjectURL(immediateBlobUrl);
+        return;
+      }
+      persistJob(completed);
+
+      // Only shorten retention after the original bytes were cached locally.
+      if (immediateBlobUrl) {
+        try { await ackNovaTask(serverTaskId); } catch { /* ignore */ }
+      }
+
+      if (jobRef.current?.id !== target.id) {
+        if (immediateBlobUrl) URL.revokeObjectURL(immediateBlobUrl);
+        return;
+      }
+
+      revokeResolvedUrls();
+      if (immediateBlobUrl) {
+        resolvedBlobUrlsRef.current.push(immediateBlobUrl);
+        setGridImageUrl(immediateBlobUrl);
+        if (target.nativeGif) await restoreNativeResult(completed, immediateBlobUrl);
+      } else {
+        const url = await loadGridImageUrl(completed);
+        setGridImageUrl(url);
+        if (target.nativeGif && url) await restoreNativeResult(completed, url);
+      }
+    } catch (error) {
+      if (jobRef.current?.id === target.id) updateJob(prev => ({ ...prev, status: 'failed', error: `读取生成结果失败：${error instanceof Error ? error.message : String(error)}`, updatedAt: nowIso() }));
+    } finally {
+      finalizingRef.current.delete(serverTaskId);
     }
-
-    const completed: ActiveGifJob = {
-      ...target,
-      status: 'review_grid',
-      gridImageRef: nextRef,
-      error: undefined,
-      updatedAt: nowIso(),
-    };
-    persistJob(completed);
-
-    try { await ackNovaTask(serverTaskId); } catch { /* ignore */ }
-
-    revokeResolvedUrls();
-    if (immediateBlobUrl) {
-      resolvedBlobUrlsRef.current.push(immediateBlobUrl);
-      setGridImageUrl(immediateBlobUrl);
-    } else {
-      const url = await loadGridImageUrl(completed);
-      setGridImageUrl(url);
-    }
-  }, [persistJob, revokeResolvedUrls, loadGridImageUrl]);
+  }, [persistJob, revokeResolvedUrls, loadGridImageUrl, restoreNativeResult, updateJob]);
 
   const subscribeServerTask = useCallback((taskId: string) => {
     clearSubscription();
@@ -228,7 +263,13 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       setJobState(initial);
 
     if (initial.gridImageRef) {
-      void loadGridImageUrl(initial).then(setGridImageUrl);
+      void loadGridImageUrl(initial).then(async url => {
+        if (jobRef.current?.id !== initial.id) return;
+        setGridImageUrl(url);
+        if (initial.nativeGif && url) await restoreNativeResult(initial, url);
+      }).catch(() => {
+        if (jobRef.current?.id === initial.id) updateJob(prev => ({ ...prev, warning: '本地结果读取失败，请主动同步或重新生成。' }));
+      });
     }
 
     if (initial.status === 'generating_grid' && initial.serverTaskId) {
@@ -294,14 +335,15 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     setGridImageUrl(null);
     setGifBlob(null);
 
-    const template = await loadGifTemplate();
-    const refsForSubmit = input.refImages.slice(0, 6);
+    const nativeGif = supportsNativeImageOutput(input.model) && input.nativeGif !== false;
+    const template = nativeGif ? null : await loadGifTemplate();
+    const refsForSubmit = nativeGif ? [] : input.refImages.slice(0, 6);
     const advancedParams = getGptImageAdvancedParamsForModel(input.model, {
       quality: input.gptImageQuality,
       style: input.gptImageStyle,
       background: input.gptImageBackground,
     });
-    const finalPrompt = buildGifPrompt({
+    const finalPrompt = nativeGif ? buildNativeGifPrompt(input) : buildGifPrompt({
       userPrompt: input.prompt,
       refImageCount: refsForSubmit.length,
       loop: input.loop,
@@ -315,6 +357,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       loop: input.loop,
       closedLoop: input.closedLoop,
       model: input.model,
+      nativeGif,
       gptImageQuality: advancedParams.quality,
       gptImageStyle: advancedParams.style,
       gptImageBackground: advancedParams.background,
@@ -331,23 +374,23 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     void cleanupJobAssets(previousJob);
 
     try {
-      // TODO: 从模型注册表读取实际的 baseUrl 和 protocol
       const serverTaskId = await createNovaTask({
         apiKey: provider.apiKey,
         baseUrl: provider.baseUrl,
         protocol: provider.protocol,
-        mode: 'image-to-image',
+        mode: nativeGif ? 'text-to-image' : 'image-to-image',
         prompt: finalPrompt,
-        outputSize: GIF_GRID_OUTPUT_SIZE,
-        customSize: GIF_GRID_CUSTOM_SIZE,
-        aspectRatio: GIF_GRID_ASPECT_RATIO,
+        outputSize: nativeGif ? 'auto' : GIF_GRID_OUTPUT_SIZE,
+        customSize: nativeGif ? undefined : GIF_GRID_CUSTOM_SIZE,
+        aspectRatio: nativeGif ? 'auto' : GIF_GRID_ASPECT_RATIO,
+        gptImageOutputFormat: nativeGif ? 'gif' : 'png',
         temperature: 1,
         model: provider.modelId,
         gptImageQuality: advancedParams.quality,
         gptImageStyle: advancedParams.style,
         gptImageBackground: advancedParams.background,
         parallelCount: 1,
-        images: buildImageReferences(template, refsForSubmit),
+        images: template ? buildImageReferences(template, refsForSubmit) : [],
       });
 
       const withTaskId: ActiveGifJob = { ...next, serverTaskId, updatedAt: nowIso() };
@@ -367,7 +410,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
 
   const encodeGif = useCallback(async (params: GifEncodeParams) => {
     const current = jobRef.current;
-    if (!current || current.status !== 'review_grid') return;
+    if (!current || current.nativeGif || current.status !== 'review_grid') return;
     let imageUrl = gridImageUrl;
     if (!imageUrl) {
       imageUrl = await loadGridImageUrl(current);
@@ -408,7 +451,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
 
   const encodeTunedGif = useCallback((frames: ImageData[], params: GifEncodeParams) => {
     const current = jobRef.current;
-    if (!current) return;
+    if (!current || current.nativeGif) return;
     updateJob(prev => ({
       ...prev,
       status: 'generating_gif',

@@ -1,6 +1,6 @@
 import { isGptImageModel } from '@/lib/gemini-config';
 import type { RefImageData } from '@/lib/job-store';
-import { supportsCustomSize, type GptImageBackground, type GptImageQuality, type GptImageStyle } from '@/lib/model-capabilities';
+import { supportsNativeImageOutput, supportsCustomSize, type GptImageBackground, type GptImageQuality, type GptImageStyle } from '@/lib/model-capabilities';
 import { getDefaultImageModel, getCompleteImageModels, loadRegistry } from '@/lib/nova-models';
 
 export type GifModel = string;
@@ -20,6 +20,10 @@ export interface ActiveGifJob {
   loop: boolean;
   closedLoop: boolean;
   model: string;
+  nativeGif?: boolean;
+  resultMimeType?: string;
+  resultFrameCount?: number;
+  warning?: string;
   gptImageQuality?: GptImageQuality;
   gptImageStyle?: GptImageStyle;
   gptImageBackground?: GptImageBackground;
@@ -124,7 +128,7 @@ export function needsOverwriteConfirm(job: ActiveGifJob | null): boolean {
 export function getGifCompatibleModels(): { value: GifModel; label: string }[] {
   const registry = loadRegistry();
   return getCompleteImageModels(registry)
-    .filter((model) => isGptImageModel(model.id) && supportsCustomSize(model.id) && model.maxOutputSize === '4K')
+    .filter((model) => supportsNativeImageOutput(model.id) || (isGptImageModel(model.id) && supportsCustomSize(model.id) && model.maxOutputSize === '4K'))
     .map((model) => ({ value: model.id, label: model.name }));
 }
 

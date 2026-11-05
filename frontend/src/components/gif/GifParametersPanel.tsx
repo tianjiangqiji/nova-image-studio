@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { AttachmentChips } from '@/components/AttachmentChips';
 import { GptImageAdvancedParamsControl } from '@/components/GptImageAdvancedParamsControl';
@@ -20,7 +21,7 @@ import {
   type GifModel,
 } from '@/lib/gif-job-store';
 import type { RefImageData } from '@/lib/job-store';
-import { supportsGptImageAdvancedParams, type GptImageAdvancedParams } from '@/lib/model-capabilities';
+import { supportsNativeImageOutput, supportsGptImageAdvancedParams, type GptImageAdvancedParams } from '@/lib/model-capabilities';
 
 export interface GifUploadedRef extends RefImageData {
   preview: string;
@@ -28,6 +29,8 @@ export interface GifUploadedRef extends RefImageData {
 }
 
 export interface GifParametersPanelProps {
+  nativeGif: boolean;
+  onNativeGifChange: (value: boolean) => void;
   prompt: string;
   onPromptChange: (value: string) => void;
   model: GifModel;
@@ -100,7 +103,7 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
   return (
     <div className="flex flex-col rounded-xl border border-border bg-muted/50 shadow-md md:h-[calc(100vh-400px)]">
       <div className="min-h-0 md:flex-1 md:overflow-y-auto">
-        <div className="p-4">
+        {props.nativeGif ? <p className="p-4 text-sm text-muted-foreground">原生 GIF 仅支持文字生成，不使用参考图。</p> : <div className="p-4">
           <div
             onDrop={props.onDrop}
             onDragOver={props.onDragOver}
@@ -135,9 +138,9 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
             </p>
             <p className="text-xs text-muted-foreground">最多 {GIF_MAX_REF_IMAGES} 张 · 当前 {props.refFiles.length} 张</p>
           </div>
-        </div>
+        </div>}
 
-        {props.refFiles.length > 0 && (
+        {!props.nativeGif && props.refFiles.length > 0 && (
           <div className="px-4 pb-2">
             <AttachmentChips
               files={props.refFiles}
@@ -149,6 +152,13 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
           </div>
         )}
 
+        {supportsNativeImageOutput(props.model) && (
+          <label className="flex items-center gap-2 px-4 pb-3 text-sm">
+            <Switch checked={props.nativeGif} onCheckedChange={props.onNativeGifChange} disabled={props.generating} aria-label="原生 GIF 模式" />
+            原生 GIF 模式
+          </label>
+        )}
+
         <Textarea
           value={props.prompt}
           onChange={event => props.onPromptChange(event.target.value)}
@@ -157,7 +167,7 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
           className="resize-none rounded-none border-0 bg-transparent placeholder:text-placeholder focus-visible:border-0 focus-visible:ring-0"
         />
 
-        {props.uploadError && (
+        {!props.nativeGif && props.uploadError && (
           <div className="px-4 pb-3">
             <p className="text-sm text-destructive">{props.uploadError}</p>
           </div>
@@ -191,12 +201,13 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
                   {option.label}
                 </button>
               ))}
-              <p className="px-2.5 py-1 text-[11px] text-muted-foreground">仅显示支持 4K 自定义分辨率的 image 系列模型，banana 系列不显示</p>
+              <p className="px-2.5 py-1 text-[11px] text-muted-foreground">支持 2.6 原生 GIF，或支持自定义网格分辨率的 image 模型</p>
             </PopoverContent>
           </Popover>
 
           {supportsGptImageAdvancedParams(props.model) && (
             <GptImageAdvancedParamsControl
+              model={props.model}
               value={props.gptImageAdvancedParams}
               onChange={props.onGptImageAdvancedParamsChange}
               variant="outline"
@@ -212,7 +223,7 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
               'gap-1',
               props.closedLoop ? 'border-primary text-primary' : '',
             )}
-            title="首尾闭合：驱使模型生成闭环动画，第12帧无缝衔接回第1帧"
+            title={props.nativeGif ? '首尾动作无缝衔接' : '首尾闭合：第12帧无缝衔接回第1帧'}
           >
             <Link className="h-3 w-3" />
             <span className="text-[11px]">首尾帧闭合</span>
@@ -247,12 +258,12 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
               {props.generating
                 ? <Loader2 className="h-4 w-4 animate-spin" />
                 : <ArrowUp className="h-4 w-4" />}
-              <span>生成网格图</span>
+              <span>{props.nativeGif ? '生成原生 GIF' : '生成网格图'}</span>
             </Button>
           </div>
         </div>
         <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-          这里仅支持 image 系列的 4K 模型。banana 系列不支持当前动图网格所需的自定义分辨率，因此不提供选择。
+          2.6 模型支持原生 GIF 模式；网格模式需支持 3264×2448 自定义分辨率。
         </p>
       </div>
     </div>

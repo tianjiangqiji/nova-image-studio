@@ -58,13 +58,12 @@ export function useWorkspaceJobs() {
               if (!image) return job;
 
               const persistedImages = image.images || (image.imageData ? [image.imageData] : []);
-              if (persistedImages.length === 0) return job;
-
               return {
                 ...job,
                 images: persistedImages,
                 imageData: persistedImages[0],
                 refImages: image.refImages,
+                gptImageMarkup: image.gptImageMarkup,
                 error: image.error,
               };
             }));

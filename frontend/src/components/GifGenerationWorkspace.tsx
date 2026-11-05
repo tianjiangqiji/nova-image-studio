@@ -20,6 +20,7 @@ import { extractGridCells, type ExtractedGrid } from '@/lib/gif-encoder';
 import {
   DEFAULT_GPT_IMAGE_ADVANCED_PARAMS,
   getGptImageAdvancedParamsForModel,
+  supportsNativeImageOutput,
   type GptImageAdvancedParams,
   type GptImageBackground,
   type GptImageQuality,
@@ -53,6 +54,7 @@ interface GifGenerationWorkspaceProps {
 const SETTINGS_KEY = 'nova-gif-settings';
 
 interface PersistedSettings {
+  nativeGif: boolean;
   model: GifModel;
   loop: boolean;
   frameDelayMs: number;
@@ -70,6 +72,8 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
 
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState<GifModel>(getDefaultGifModelId());
+  const [nativeGif, setNativeGif] = useState(true);
+  const nativeGifActive = supportsNativeImageOutput(model) && nativeGif;
   const [gptImageAdvancedParams, setGptImageAdvancedParams] = useState<GptImageAdvancedParams>(DEFAULT_GPT_IMAGE_ADVANCED_PARAMS);
   const [loop, setLoop] = useState(true);
   const [closedLoop, setClosedLoop] = useState(false);
@@ -114,9 +118,9 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     setOptimizing(true);
     setOptimizeOpen(true);
 
-    const images = refFiles.map(f => ({ dataUrl: f.dataUrl, mimeType: f.mimeType }));
+    const images = nativeGifActive ? [] : refFiles.map(f => ({ dataUrl: f.dataUrl, mimeType: f.mimeType }));
     const handle = streamPromptOptimize(
-      { apiKey: textModel.apiKey, model: textModel.id, mode: 'gif', prompt: prompt.trim(), images },
+      { apiKey: textModel.apiKey, model: textModel.id, mode: nativeGifActive ? 'native-gif' : 'gif', prompt: prompt.trim(), images },
       {
         onDelta(token) { setOptimizedText(prev => prev + token); },
         onDone() { setOptimizing(false); },
@@ -125,7 +129,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
       textModel.baseUrl,
     );
     optimizeHandleRef.current = handle;
-  }, [prompt, refFiles]);
+  }, [prompt, refFiles, nativeGifActive]);
 
   const handleOptimizeCancel = useCallback(() => {
     optimizeHandleRef.current?.abort();
@@ -174,6 +178,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
       if (typeof saved.framePadding === 'number' && saved.framePadding >= 0 && saved.framePadding <= GIF_MAX_FRAME_PADDING) {
         setFramePadding(saved.framePadding);
       }
+      setNativeGif(saved.nativeGif !== false);
       setSettingsReady(true);
     });
 
@@ -185,6 +190,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
   useEffect(() => {
     if (!settingsReady) return;
     saveJsonToStorage(SETTINGS_KEY, {
+      nativeGif,
       model,
       loop,
       closedLoop,
@@ -195,7 +201,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
       gptImageStyle: gptImageAdvancedParams.style,
       gptImageBackground: gptImageAdvancedParams.background,
     });
-  }, [model, loop, closedLoop, frameDelayMs, loopCount, framePadding, gptImageAdvancedParams, settingsReady]);
+  }, [model, loop, closedLoop, frameDelayMs, loopCount, framePadding, gptImageAdvancedParams, settingsReady, nativeGif]);
 
   useEffect(() => {
     if (!workflow.startedAt || (workflow.job?.status !== 'generating_grid' && workflow.job?.status !== 'generating_gif')) {
@@ -222,6 +228,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
   const generating = status === 'generating_grid' || status === 'generating_gif';
 
   const processFiles = useCallback(async (fileList: FileList | File[]) => {
+    if (nativeGifActive) return;
     const files = Array.from(fileList).filter(file => file.type.startsWith('image/'));
     if (files.length === 0) {
       setUploadError('请选择图片文件');
@@ -261,7 +268,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     } finally {
       setUploading(false);
     }
-  }, [refFiles.length]);
+  }, [refFiles.length, nativeGifActive]);
 
   const handleDrop = useCallback((event: React.DragEvent) => {
     event.preventDefault();
@@ -284,7 +291,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
 
   useEffect(() => {
     const handlePaste = (event: ClipboardEvent) => {
-      if (!hasApiKey || uploading) return;
+      if (!hasApiKey || uploading || nativeGifActive) return;
       const target = event.target as HTMLElement;
       // 只处理粘贴目标在本表单容器内的事件，避免与其他全局粘贴处理器冲突
       if (!dropRef.current?.contains(target)) return;
@@ -304,7 +311,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     };
     document.addEventListener('paste', handlePaste);
     return () => document.removeEventListener('paste', handlePaste);
-  }, [hasApiKey, uploading, processFiles]);
+  }, [hasApiKey, uploading, processFiles, nativeGifActive]);
 
   const handleModelChange = useCallback((value: GifModel) => {
     setModel(value);
@@ -312,6 +319,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
   }, []);
 
   const submitInput = useMemo(() => ({
+    nativeGif: nativeGifActive,
     prompt,
     loop,
     closedLoop,
@@ -319,7 +327,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     gptImageQuality: gptImageAdvancedParams.quality,
     gptImageStyle: gptImageAdvancedParams.style,
     gptImageBackground: gptImageAdvancedParams.background,
-    refImages: refFiles.map<RefImageData>(file => ({
+    refImages: nativeGifActive ? [] : refFiles.map<RefImageData>(file => ({
       id: file.id,
       name: file.name,
       dataUrl: file.dataUrl,
@@ -328,7 +336,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     frameDelayMs,
     loopCount,
     framePadding,
-  }), [prompt, loop, closedLoop, model, gptImageAdvancedParams, refFiles, frameDelayMs, loopCount, framePadding]);
+  }), [prompt, loop, closedLoop, model, gptImageAdvancedParams, refFiles, frameDelayMs, loopCount, framePadding, nativeGifActive]);
 
   const performSubmit = useCallback(async () => {
     if (!hasApiKey) {
@@ -423,13 +431,13 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     if (!workflow.job || !workflow.gridImageUrl) return undefined;
     return {
       id: `${workflow.job.id}-grid`,
-      name: `gif-grid-${workflow.job.id}`,
+      name: `${workflow.job.nativeGif ? 'gif-native' : 'gif-grid'}-${workflow.job.id}`,
       src: workflow.gridImageUrl,
       storedRef: workflow.job.gridImageRef
         ? { jobId: workflow.job.id, imageRef: workflow.job.gridImageRef, imageIndex: 0 }
         : undefined,
       sourceKind: 'gif',
-      sourceLabel: 'GIF 网格图',
+      sourceLabel: workflow.job.nativeGif ? '原生 GIF 结果' : 'GIF 网格图',
       sourceRef: workflow.job.id,
       prompt: workflow.job.prompt,
     };
@@ -445,6 +453,8 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
           prompt={prompt}
           onPromptChange={setPrompt}
           model={model}
+          nativeGif={nativeGifActive}
+          onNativeGifChange={setNativeGif}
           modelOptions={gifModelOptions}
           modelPopoverOpen={modelPopoverOpen}
           onModelPopoverOpenChange={setModelPopoverOpen}
@@ -474,6 +484,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
           onClear={handleClearClick}
         />
         <GifReviewPanel
+          nativeGif={nativeGifActive}
           status={status}
           job={workflow.job}
           gridImageUrl={workflow.gridImageUrl}
@@ -510,15 +521,15 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
       </div>
 
       <p className="text-xs text-muted-foreground leading-relaxed">
-        系统会自动把生成网格图并切片为GIF，搭配你填写的主题与可选的参考图，生成 3×4 = 12 帧的网格底图，再在本地切片合成 GIF。
-        网格图分辨率固定为 3264×2448（单帧 816×816 正方形），仅显示支持 4K 自定义分辨率的 image 系列模型。
-        banana 系列不支持当前动图网格所需的自定义分辨率，因此这里不提供选择。
+        {nativeGifActive
+          ? '原生 GIF 模式直接获取并播放上游结果，无需切图。若上游返回静态图，将保留原始文件并提示实际格式。'
+          : '生成 4 列 × 3 行的 12 帧网格图，再在本地切片合成 GIF。网格图分辨率为 3264×2448，单帧 816×816。'}
       </p>
 
       {previewOpen && workflow.gridImageUrl && createPortal(
         <HistoryImagePreview
           images={[workflow.gridImageUrl]}
-          alt="GIF 网格底图"
+          alt={workflow.job?.nativeGif ? '原生 GIF 生成结果' : 'GIF 网格底图'}
           onClose={() => setPreviewOpen(false)}
           actionPayloads={gridActionPayload ? [gridActionPayload] : undefined}
         />,
@@ -542,7 +553,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
       {resetOpen && createPortal(
         <ConfirmDialog
           title="清空当前工作流？"
-          message="将删除本地缓存的网格图和当前任务，注意保存好已生成的 GIF。是否继续？"
+          message="将删除本地缓存的生成结果和当前任务，注意保存好已生成的 GIF。是否继续？"
           confirmText="清空"
           onConfirm={() => {
             setResetOpen(false);

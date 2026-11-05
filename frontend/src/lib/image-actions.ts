@@ -218,7 +218,7 @@ export async function resolveImagePayloadToBlob(payload: ImageActionPayload): Pr
 
 function getDownloadName(payload: ImageActionPayload, blob: Blob): string {
   const rawName = payload.name?.trim() || payload.id || payload.assetId || payload.agentImageId || `nova-image-${Date.now()}`;
-  const baseName = rawName.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 80) || 'nova-image';
+  const baseName = rawName.replace(/\.(?:png|jpe?g|webp|gif|svg|avif)$/i, '').replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 80) || 'nova-image';
   const ext = getAssetFileExtension(blob.type || payload.mimeType || 'image/png');
   return baseName.toLowerCase().endsWith(`.${ext}`) ? baseName : `${baseName}.${ext}`;
 }

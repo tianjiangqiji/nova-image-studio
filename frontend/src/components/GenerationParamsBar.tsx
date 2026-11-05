@@ -227,7 +227,7 @@ export function GenerationParamsBar({ value, onChange, size = 'xs', className }:
       </Popover>
 
       {supportsAdvancedParams && (
-        <GptImageAdvancedParamsControl value={value.gptImageAdvancedParams} onChange={(next) => onChange({ gptImageAdvancedParams: next })} variant="outline" size={size} />
+        <GptImageAdvancedParamsControl value={value.gptImageAdvancedParams} onChange={(next) => onChange({ gptImageAdvancedParams: next })} model={value.model} variant="outline" size={size} />
       )}
 
       {supportsTemperature && (

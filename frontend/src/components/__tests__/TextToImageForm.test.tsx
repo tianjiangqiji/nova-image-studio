@@ -48,6 +48,7 @@ describe('TextToImageForm', () => {
         reversePrompt: '',
         agent: '',
         promptOptimize: '',
+        layoutSpec: '',
         imageDescribe: '',
         sliceDecomposition: '',
         sliceReconstruct: '',

@@ -9,6 +9,7 @@ gpt_image_playground-main
 MagicalCanvas-main/
 # testing
 coverage/
+.playwright-cli/
 
 # next.js
 .next/

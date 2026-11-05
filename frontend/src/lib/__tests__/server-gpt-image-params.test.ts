@@ -18,18 +18,18 @@ describe('backend GPT Image advanced params forwarding', () => {
     expect(serverSource).not.toContain('supportsGptImageAdvancedParams(');
   });
 
-  it('forwards quality/background/output_format and conditional style in multipart edits', () => {
+  it('forwards quality/background/output_format without style in multipart edits', () => {
     expect(serverSource).toContain("formData.append('quality', advancedParams.quality)");
     expect(serverSource).toContain("formData.append('background', advancedParams.background)");
     expect(serverSource).toContain("formData.append('output_format', 'png')");
-    expect(serverSource).toContain("formData.append('style', advancedParams.style)");
+    expect(serverSource).not.toContain("formData.append('style'");
   });
 
-  it('forwards quality/background/output_format and conditional style in JSON generations', () => {
+  it('forwards quality/background/output_format without style in JSON generations', () => {
     expect(serverSource).toContain('quality: advancedParams.quality');
     expect(serverSource).toContain('background: advancedParams.background');
     expect(serverSource).toContain("output_format: 'png'");
-    expect(serverSource).toContain("advancedParams.style === 'vivid' || advancedParams.style === 'natural' ? { style: advancedParams.style } : {}");
+    expect(serverSource).not.toContain('style: advancedParams.style');
   });
 
   it('routes OpenAI image endpoint by mode rather than legacy model names', () => {

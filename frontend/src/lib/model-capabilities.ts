@@ -7,16 +7,22 @@ import {
   type ModelId,
 } from '@/lib/gemini-config';
 import { getImageModelById, loadRegistry } from '@/lib/nova-models';
-import type { AspectRatio, OutputSize, RefImageData, StoredJob } from '@/lib/job-store';
+import type { AspectRatio, OutputSize, RefImageData, StoredJob, GptImageMarkup } from '@/lib/job-store';
 import type { LayoutSpec } from '@/lib/layout-spec';
 
 export type ParallelCount = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 export const PARALLEL_COUNT_VALUES: ParallelCount[] = [1, 2, 3, 4, 5, 6, 7, 8];
 type FixedOutputSize = Exclude<OutputSize, 'auto'>;
 
-export type GptImageQuality = 'auto' | 'high' | 'medium' | 'low';
+export type GptImageQuality = 'auto' | 'max' | 'xhigh' | 'high' | 'medium' | 'low';
 export type GptImageStyle = 'auto' | 'vivid' | 'natural';
 export type GptImageBackground = 'auto' | 'transparent' | 'opaque';
+export type GptImageOutputFormat = 'png' | 'svg' | 'gif';
+
+export function supportsNativeImageOutput(model: string): boolean {
+  const config = getModelConfig(model);
+  return (!config || config.protocol === 'openai') && /^gpt-image-2\.6(?:-|$)/i.test(config?.modelId || model);
+}
 
 export interface GptImageAdvancedParams {
   quality: GptImageQuality;
@@ -44,6 +50,28 @@ export const GPT_IMAGE_QUALITY_OPTIONS: { value: GptImageQuality; label: string 
   { value: 'medium', label: '中' },
   { value: 'low', label: '低' },
 ];
+
+const GPT_IMAGE_EXTENDED_QUALITY_OPTIONS: { value: GptImageQuality; label: string }[] = [
+  { value: 'auto', label: '自动' },
+  { value: 'max', label: '最高' },
+  { value: 'xhigh', label: '超高' },
+  ...GPT_IMAGE_QUALITY_OPTIONS.filter(option => option.value !== 'auto'),
+];
+
+function isGptImage25Or26(model: string): boolean {
+  const config = getModelConfig(model);
+  if (config && config.protocol !== 'openai') return false;
+  return /^gpt-image-2\.[56](?:-|$)/i.test(config?.modelId || model);
+}
+
+export function getGptImageQualityOptions(model?: string): { value: GptImageQuality; label: string }[] {
+  return model && isGptImage25Or26(model)
+    ? GPT_IMAGE_EXTENDED_QUALITY_OPTIONS : GPT_IMAGE_QUALITY_OPTIONS;
+}
+
+export function supportsGptImageMarkup(model: string): boolean {
+  return isGptImage25Or26(model);
+}
 
 export const GPT_IMAGE_STYLE_OPTIONS: { value: GptImageStyle; label: string }[] = [
   { value: 'auto', label: '自动' },
@@ -166,6 +194,8 @@ export interface RetryData {
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
   refImages?: RefImageData[];
+  gptImageMarkup?: GptImageMarkup;
+  gptImageOutputFormat?: GptImageOutputFormat;
   /** 原任务的构图规范，恢复时带回构图模式 */
   layoutSpec?: LayoutSpec;
 }
@@ -312,16 +342,16 @@ export function supportsGptImageAdvancedParams(model: string): boolean {
   return Boolean(preset?.supportsAdvancedParams);
 }
 
-export function normalizeGptImageQuality(value?: string): GptImageQuality {
-  return GPT_IMAGE_QUALITY_OPTIONS.some(option => option.value === value)
+export function normalizeGptImageQuality(value?: string, model?: string): GptImageQuality {
+  const options = model ? getGptImageQualityOptions(model) : GPT_IMAGE_EXTENDED_QUALITY_OPTIONS;
+  return options.some(option => option.value === value)
     ? (value as GptImageQuality)
     : DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.quality;
 }
 
-export function normalizeGptImageStyle(value?: string): GptImageStyle {
-  return GPT_IMAGE_STYLE_OPTIONS.some(option => option.value === value)
-    ? (value as GptImageStyle)
-    : DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.style;
+export function normalizeGptImageStyle(_value?: string): GptImageStyle {
+  // 兼容历史记录，GPT Image 不再发送 DALL·E 的 style 参数。
+  return DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.style;
 }
 
 export function normalizeGptImageBackground(value?: string): GptImageBackground {
@@ -339,7 +369,7 @@ export function getGptImageAdvancedParamsForModel(
   }
 
   return {
-    quality: normalizeGptImageQuality(params?.quality),
+    quality: normalizeGptImageQuality(params?.quality, model),
     style: normalizeGptImageStyle(params?.style),
     background: normalizeGptImageBackground(params?.background),
   };
@@ -394,7 +424,7 @@ export function getSizeOptions(model: ModelId): { value: OutputSize; label: stri
   if (
     presetId === 'gemini-3-pro-image-preview'
     || presetId === 'antigravity-gemini-image'
-    || presetId === 'gpt-image-2'
+    || String(presetId).startsWith('gpt-image-2')
   ) {
     return [
       { value: '1K', label: '1K' },
@@ -450,7 +480,7 @@ export function getAspectRatioOptions(model: ModelId, outputSize: OutputSize): A
       resolution: ar.resolutions[outputSize] || ar.resolutions['1K'],
     }));
   }
-  if (presetId === 'gpt-image-2') {
+  if (String(presetId).startsWith('gpt-image-2')) {
     return GPT_IMAGE_ASPECT_RATIOS.map(ar => ({
       value: ar.value,
       label: ar.label,
@@ -623,7 +653,7 @@ export function isRetryLayoutCompatible(model: ModelId, outputSize: OutputSize, 
     return ['1K', '2K', '4K'].includes(outputSize);
   }
 
-  if (presetId === 'gpt-image-2') {
+  if (String(presetId).startsWith('gpt-image-2')) {
     const resolution = getGptImageResolution(outputSize, aspectRatio);
     return ['1K', '2K', '4K'].includes(outputSize) && isGptImage2ProResolutionSupported(resolution);
   }
@@ -703,7 +733,9 @@ export function getCompatibleRetryData(job: StoredJob): RetryData {
   const supportsTemperature = getSupportsTemperature(model);
   const maxRefs = getModelMaxRefImages(model);
   const defaultLayout = getDefaultRetryLayout(model);
-  const shouldKeepLayout = modelCompatible && isRetryLayoutCompatible(model, job.output_size, job.aspect_ratio);
+  const validCustomSize = supportsCustomSize(model) && job.output_size !== 'auto'
+    ? normalizeCustomImageSize(job.custom_size, getCustomSizeMaxSide(model)) : undefined;
+  const shouldKeepLayout = modelCompatible && (Boolean(validCustomSize) || isRetryLayoutCompatible(model, job.output_size, job.aspect_ratio));
   const outputSize: OutputSize = shouldKeepLayout ? job.output_size : defaultLayout.outputSize;
   const aspectRatio: AspectRatio = shouldKeepLayout ? job.aspect_ratio : defaultLayout.aspectRatio;
   const customSize = shouldKeepLayout && supportsCustomSize(model)
@@ -732,6 +764,10 @@ export function getCompatibleRetryData(job: StoredJob): RetryData {
     gptImageStyle: advancedParams.style,
     gptImageBackground: advancedParams.background,
     refImages: job.refImages?.slice(0, maxRefs),
+    gptImageOutputFormat: supportsNativeImageOutput(model) ? job.gptImageOutputFormat : undefined,
+    gptImageMarkup: supportsGptImageMarkup(model) && maxRefs > 0
+      && job.gptImageMarkup?.referenceId === job.refImages?.[0]?.id
+      ? job.gptImageMarkup : undefined,
     layoutSpec: job.layoutSpec,
   };
 }

@@ -1,5 +1,5 @@
 import type { AspectRatio, OutputSize } from '@/lib/gemini-config';
-import type { GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
+import type { GptImageOutputFormat, GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
 import {
   getCompleteImageModels,
   getCompleteTextModels,
@@ -47,6 +47,8 @@ export interface CreateNovaTaskInput {
   gptImageQuality?: GptImageQuality;
   gptImageStyle?: GptImageStyle;
   gptImageBackground?: GptImageBackground;
+  gptImageOutputFormat?: GptImageOutputFormat;
+  gptImageMarkup?: ImageReference;
   parallelCount: number;
   images: ImageReference[];
 }
@@ -189,10 +191,12 @@ async function fetchWithTimeout(
 }
 
 export async function createNovaTask(input: CreateNovaTaskInput): Promise<string> {
+  const payload = { ...input };
+  delete payload.gptImageStyle;
   const response = await fetchWithTimeout('/api/nova/tasks', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
+    body: JSON.stringify(payload),
   }, CREATE_TASK_TIMEOUT);
   const data = await parseTaskResponse<CreateTaskResponse>(response);
   if (!data?.taskId) throw new Error('创建任务失败：后端未返回任务 ID');

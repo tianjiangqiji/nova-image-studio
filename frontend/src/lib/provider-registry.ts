@@ -138,6 +138,7 @@ export function inferImagePreset(kind: ProviderKind, modelId: string): BuiltinIm
     if (id.includes('wan2')) return 'alibaba-wan-image';
     return 'alibaba-qwen-image';
   }
+  if (/^gpt-image-2\.6(?:-|$)/.test(id)) return /-pro(?:-|$)/.test(id) ? 'gpt-image-2.6-pro' : 'gpt-image-2.6';
   return 'gpt-image-2';
 }
 

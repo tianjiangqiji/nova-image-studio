@@ -11,6 +11,8 @@ const ZIP_PATH = path.join(ROOT, 'out.zip');
 // 后端文件列表
 const BACKEND_FILES = [
   { src: path.join(BACKEND_DIR, 'server.js'), dest: 'server.js' },
+  { src: path.join(BACKEND_DIR, 'gpt-image-markup.js'), dest: 'gpt-image-markup.js' },
+  { src: path.join(BACKEND_DIR, 'image-output.js'), dest: 'image-output.js' },
   { src: path.join(BACKEND_DIR, 'cdp.js'), dest: 'cdp.js' },
   { src: path.join(BACKEND_DIR, 'taobao-extract.js'), dest: 'taobao-extract.js' },
   { src: path.join(BACKEND_DIR, 'doubao.js'), dest: 'doubao.js' },

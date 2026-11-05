@@ -13,7 +13,7 @@ const OPTIMIZE_MODEL = 'gpt-5.4-mini';
 const OPTIMIZE_TIMEOUT_MS = 30_000;
 const OPTIMIZE_MAX_ATTEMPTS = 2;
 
-export type PromptOptimizeMode = 'text-to-image' | 'image-to-image' | 'gif' | 'agent' | 'canvas-prompt-gallery-import' | 'canvas-prompt-gallery-config' | 'layout-spec';
+export type PromptOptimizeMode = 'text-to-image' | 'image-to-image' | 'gif' | 'native-gif' | 'agent' | 'canvas-prompt-gallery-import' | 'canvas-prompt-gallery-config' | 'layout-spec';
 
 export interface OptimizeImageInput {
   dataUrl: string;
@@ -74,6 +74,17 @@ const SYSTEM_PROMPTS: Record<PromptOptimizeMode, string> = {
 - 使用简洁精准的中文描述
 - 不要添加与画面无关的说明文字
 只输出优化后的提示词本身，不要输出任何解释、前缀或额外说明。`,
+  'native-gif': `你是一位专业的动图生成提示词优化专家。
+你的任务是根据用户的文字描述，优化为直接生成可播放 GIF 动画的提示词。
+优化规则：
+- 保留用户的原始意图、主体特征和指定风格
+- 描述完整、连贯的动作过程，补充节奏、运动方向和镜头变化
+- 保持主体外观、场景和光影在动画中的一致性
+- 保留用户指定的画幅、时长、播放次数和首尾衔接要求，不自行限制帧数或画幅
+- 输出目标是完整的 GIF 动画文件，不是网格图、雪碧图、分镜拼图或待切片的静态图片
+- 使用简洁精准的中文描述
+只输出优化后的提示词本身，不要输出任何解释、前缀或额外说明。`,
+
   agent: `你是一位描述润色助手。
 你的任务是优化用户的自然语言描述，使其更加清晰、准确和详细。
 优化规则：

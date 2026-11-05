@@ -7,8 +7,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { MODEL_OPTIONS, isGptImageModel } from "@/lib/gemini-config";
 import {
   GPT_IMAGE_BACKGROUND_OPTIONS,
-  GPT_IMAGE_QUALITY_OPTIONS,
-  GPT_IMAGE_STYLE_OPTIONS,
+  getGptImageQualityOptions,
   getOutputSizeLabel,
   getSupportsTemperature,
   normalizeModel,
@@ -161,10 +160,9 @@ function describeImageExtras(config: CanvasGenerationConfig): string[] {
   const model = normalizeModel(config.model);
   const chips: string[] = [];
   if (isGptImageModel(model)) {
-    const quality = GPT_IMAGE_QUALITY_OPTIONS.find((option) => option.value === config.gptImageQuality)?.label || config.gptImageQuality;
-    const style = GPT_IMAGE_STYLE_OPTIONS.find((option) => option.value === config.gptImageStyle)?.label || config.gptImageStyle;
+    const quality = getGptImageQualityOptions(model).find((option) => option.value === config.gptImageQuality)?.label || config.gptImageQuality;
     const background = GPT_IMAGE_BACKGROUND_OPTIONS.find((option) => option.value === config.gptImageBackground)?.label || config.gptImageBackground;
-    chips.push(`质量：${quality}`, `风格：${style}`, `背景：${background}`);
+    chips.push(`质量：${quality}`, `背景：${background}`);
   }
   if (getSupportsTemperature(model)) chips.push(`温度：${config.temperature.toFixed(2)}`);
   return chips;

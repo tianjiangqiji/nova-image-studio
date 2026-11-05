@@ -210,6 +210,8 @@ export function WorkspaceShell() {
         gptImageBackground: workspace.retryData.gptImageBackground,
         parallelCount: workspace.retryData.parallelCount,
         refImages: workspace.retryData.refImages,
+        gptImageMarkup: workspace.retryData.gptImageMarkup,
+        gptImageOutputFormat: workspace.retryData.gptImageOutputFormat,
         layoutSpec: workspace.retryData.layoutSpec,
       }
       : undefined

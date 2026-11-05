@@ -6,11 +6,13 @@ import {
   type ImageReference,
 } from '@/lib/ccode-task-client';
 import type { ModelId } from '@/lib/gemini-config';
-import type { AspectRatio, OutputSize, StoredJob } from '@/lib/job-store';
+import type { AspectRatio, OutputSize, StoredJob, GptImageMarkup } from '@/lib/job-store';
 import type { LayoutSpec } from '@/lib/layout-spec';
 import {
   getGptImageAdvancedParamsForModel,
   resolveSubmitLayout,
+  supportsGptImageMarkup,
+  type GptImageOutputFormat,
   type GptImageBackground,
   type GptImageQuality,
   type GptImageStyle,
@@ -20,6 +22,7 @@ import { generateUUID } from '@/lib/uuid';
 import { downloadAndStoreImages, type DownloadResult, type ImageDownloadProgressItem } from '@/lib/image-downloader';
 
 export interface TextToImageSubmitInput {
+  gptImageOutputFormat?: GptImageOutputFormat;
   prompts: string[];
   outputSize: OutputSize;
   customSize?: string;
@@ -35,8 +38,10 @@ export interface TextToImageSubmitInput {
 }
 
 export interface ImageToImageSubmitInput {
+  gptImageOutputFormat?: GptImageOutputFormat;
   prompt: string;
   files: { id: string; name: string; dataUrl: string; mimeType: string }[];
+  gptImageMarkup?: GptImageMarkup;
   outputSize: OutputSize;
   customSize?: string;
   aspectRatio: AspectRatio;
@@ -349,6 +354,7 @@ export async function submitTextToImage(
       undefined,
       input.layoutSpec
     );
+    job.gptImageOutputFormat = input.gptImageOutputFormat;
     actions.addJob(job);
 
     try {
@@ -364,8 +370,8 @@ export async function submitTextToImage(
         temperature: input.temperature,
         model: provider.modelId,
         gptImageQuality: input.gptImageQuality,
-        gptImageStyle: input.gptImageStyle,
         gptImageBackground: input.gptImageBackground,
+        gptImageOutputFormat: input.gptImageOutputFormat,
         parallelCount: input.parallelCount,
         images: [],
       });
@@ -401,6 +407,9 @@ export async function submitImageToImage(
     mimeType: file.mimeType,
   }));
   const imageReferences = buildImageReferences(input.files);
+  const markup = supportsGptImageMarkup(input.model)
+    && input.gptImageMarkup?.referenceId === input.files[0]?.id
+    ? input.gptImageMarkup : undefined;
   const layout = resolveSubmitLayout(input.model as ModelId, input.outputSize, input.aspectRatio, input.prompt);
   const job = createBaseJob(
     'image-to-image',
@@ -418,6 +427,8 @@ export async function submitImageToImage(
     input.layoutSpec
   );
 
+  job.gptImageMarkup = markup;
+  job.gptImageOutputFormat = input.gptImageOutputFormat;
   actions.addJob(job);
 
   try {
@@ -433,10 +444,11 @@ export async function submitImageToImage(
       temperature: input.temperature,
       model: provider.modelId,
       gptImageQuality: input.gptImageQuality,
-      gptImageStyle: input.gptImageStyle,
       gptImageBackground: input.gptImageBackground,
+      gptImageOutputFormat: input.gptImageOutputFormat,
       parallelCount: input.parallelCount,
       images: imageReferences,
+      gptImageMarkup: markup ? { data: markup.dataUrl.split(',')[1], mimeType: 'image/png' } : undefined,
     });
 
     actions.replaceJob(job.id, current => ({

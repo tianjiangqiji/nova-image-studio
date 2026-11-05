@@ -3,10 +3,11 @@ import { ackNovaTask, createNovaTask, resolveImageTaskProvider, type NovaTaskRes
 import { downloadAndStoreImages } from '@/lib/image-downloader';
 import { syncDynamicModelExports } from '@/lib/gemini-config';
 import type { StoredJob } from '@/lib/job-store';
-import { saveRegistry } from '@/lib/nova-models';
+import { loadRegistry, saveRegistry } from '@/lib/nova-models';
 import {
   finalizeCompletedServerTask,
   submitTextToImage,
+  submitImageToImage,
   type SubmitActions,
 } from '@/lib/workspace-task-service';
 vi.mock('@/lib/ccode-task-client', async importOriginal => {
@@ -99,6 +100,7 @@ beforeEach(() => {
       reversePrompt: '',
       agent: '',
       promptOptimize: '',
+      layoutSpec: '',
       imageDescribe: '',
       sliceDecomposition: '',
       sliceReconstruct: '',
@@ -142,12 +144,12 @@ describe('submitTextToImage', () => {
       mode: 'text-to-image',
       model: 'gpt-image-2',
       gptImageQuality: 'high',
-      gptImageStyle: 'vivid',
       gptImageBackground: 'transparent',
     }));
+    expect(mockedCreateNovaTask.mock.calls[0][0]).not.toHaveProperty('gptImageStyle');
     expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({
       gptImageQuality: 'high',
-      gptImageStyle: 'vivid',
+      gptImageStyle: 'auto',
       gptImageBackground: 'transparent',
     }));
     expect(getJob().serverTaskId).toBe('task-advanced-1');
@@ -180,6 +182,7 @@ describe('submitTextToImage', () => {
         reversePrompt: '',
         agent: '',
         promptOptimize: '',
+        layoutSpec: '',
         imageDescribe: '',
         sliceDecomposition: '',
         sliceReconstruct: '',
@@ -213,6 +216,32 @@ describe('submitTextToImage', () => {
       output_size: '1K',
       aspect_ratio: '3:4',
     }));
+  });
+});
+
+describe('submitImageToImage markup', () => {
+  it.each([true, false])('binds markup to the first reference only (matching=%s)', async matching => {
+    const registry = loadRegistry();
+    saveRegistry({ ...registry, providers: undefined,
+      imageModels: [{ ...registry.imageModels[0], id: 'custom-model', modelId: 'gpt-image-2.6-flare' }],
+    });
+    syncDynamicModelExports();
+    mockedResolveImageTaskProvider.mockReturnValue({ apiKey: 'test-api-key', baseUrl: 'https://example.test',
+      protocol: 'openai', modelId: 'gpt-image-2.6-flare' });
+    const { actions } = createActions(makeJob());
+    const markup = { referenceId: matching ? 'first' : 'other', dataUrl: 'data:image/png;base64,b3ZlcmxheQ==' };
+    await submitImageToImage({
+      prompt: 'change the marked area', model: 'custom-model', outputSize: '1K', aspectRatio: '1:1', temperature: 1,
+      parallelCount: 1, gptImageQuality: 'max', gptImageStyle: 'vivid', gptImageBackground: 'auto',
+      files: [{ id: 'first', name: 'first.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,b3JpZ2luYWw=' }],
+      gptImageMarkup: markup,
+    }, actions, vi.fn());
+    const payload = mockedCreateNovaTask.mock.calls[0][0];
+    expect(payload).toMatchObject({ model: 'gpt-image-2.6-flare', gptImageQuality: 'max',
+      images: [{ data: 'b3JpZ2luYWw=', mimeType: 'image/png' }] });
+    expect(payload).not.toHaveProperty('gptImageStyle');
+    expect(payload.gptImageMarkup).toEqual(matching ? { data: 'b3ZlcmxheQ==', mimeType: 'image/png' } : undefined);
+    expect(actions.addJob).toHaveBeenCalledWith(expect.objectContaining({ gptImageMarkup: matching ? markup : undefined }));
   });
 });
 

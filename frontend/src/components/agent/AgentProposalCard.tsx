@@ -556,6 +556,7 @@ export function AgentProposalCard({
 
         {supportsAdvancedParams && (
           <GptImageAdvancedParamsControl
+            model={imageModel}
             value={advancedParams}
             onChange={value => setLayout(prev => ({
               ...prev,

@@ -6,6 +6,7 @@ import { ArrowUp, CloudUpload, FileText, ImagePlus, Info, LayoutTemplate, Loader
 import { AttachmentChips } from './AttachmentChips';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
+import { Switch } from '@/components/ui/switch';
 import { MissingApiKeyDialog } from '@/components/MissingApiKeyDialog';
 import { QuickPromptDialog } from '@/components/QuickPromptDialog';
 import { PromptOptimizeDialog } from '@/components/PromptOptimizeDialog';
@@ -33,6 +34,9 @@ import {
   sanitizeLayoutForModel,
   supportsCustomSize,
   supportsReferenceImages,
+  supportsGptImageMarkup,
+  supportsNativeImageOutput,
+  type GptImageOutputFormat,
   type GptImageAdvancedParams,
   type GptImageBackground,
   type GptImageQuality,
@@ -43,7 +47,8 @@ import {
 import { prepareUploadImage, getOptimizationBadge } from '@/lib/upload-image-cache';
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { dispatchImageActionToast } from '@/lib/image-actions';
-import type { AspectRatio, OutputSize, RefImageData } from '@/lib/job-store';
+import type { AspectRatio, OutputSize, RefImageData, GptImageMarkup } from '@/lib/job-store';
+import { ImageAnnotationEditor } from '@/components/canvas/components/image-annotation-editor';
 import type { ImageFormSettings } from '@/lib/form-settings';
 import type { ImageToImageSubmitInput, TextToImageSubmitInput } from '@/lib/workspace-task-service';
 import { cn } from '@/lib/utils';
@@ -96,8 +101,10 @@ interface ImageGenerationWorkbenchProps {
     gptImageQuality?: GptImageQuality;
     gptImageStyle?: GptImageStyle;
     gptImageBackground?: GptImageBackground;
+    gptImageOutputFormat?: GptImageOutputFormat;
     parallelCount?: ParallelCount;
     refImages?: RefImageData[];
+    gptImageMarkup?: GptImageMarkup;
     /** 重试/恢复带回的构图规范 */
     layoutSpec?: LayoutSpec | null;
   };
@@ -142,6 +149,8 @@ export function ImageGenerationWorkbench({
 }: ImageGenerationWorkbenchProps) {
   const [prompt, setPrompt] = useState('');
   const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
+  const [gptImageMarkup, setGptImageMarkup] = useState<GptImageMarkup | undefined>();
+  const [markupEditorOpen, setMarkupEditorOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const formRef = useRef<HTMLDivElement>(null);
 
@@ -153,6 +162,7 @@ export function ImageGenerationWorkbench({
   const [gptImageAdvancedParams, setGptImageAdvancedParams] = useState<GptImageAdvancedParams>(DEFAULT_GPT_IMAGE_ADVANCED_PARAMS);
   const [parallelCount, setParallelCount] = useState<ParallelCount>(1);
   const [settingsReady, setSettingsReady] = useState(false);
+  const [outputFormat, setOutputFormat] = useState<'png' | 'svg'>('png');
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -182,6 +192,18 @@ export function ImageGenerationWorkbench({
   const aspectRatioOptions = useMemo(() => getAspectRatioOptions(model, outputSize), [model, outputSize]);
   const currentMode: WorkbenchMode = pendingFiles.length > 0 ? 'image-to-image' : 'text-to-image';
   const autoLayoutLocked = outputSize === 'auto';
+  const nativeOutputSupported = supportsNativeImageOutput(model);
+  const activeOutputFormat = nativeOutputSupported ? outputFormat : 'png';
+  const markupSupported = supportsGptImageMarkup(model) && activeOutputFormat === 'png';
+  const activeMarkup = markupSupported && gptImageMarkup?.referenceId === pendingFiles[0]?.id
+    ? gptImageMarkup : undefined;
+  // 删除/更换首图或切换到不支持的模型后，不得把旧标注套到其他参考图。
+  if (gptImageMarkup && (!markupSupported || gptImageMarkup.referenceId !== pendingFiles[0]?.id)) {
+    setGptImageMarkup(undefined);
+  }
+  if (markupEditorOpen && (!markupSupported || !pendingFiles[0])) {
+    setMarkupEditorOpen(false);
+  }
   const disabledMessage = '请先在设置中配置 Nova API 密钥，配置完成后即可开始生成图片。';
 
   const handleParamsChange = useCallback((patch: Partial<GenerationParamsValue>) => {
@@ -251,11 +273,13 @@ export function ImageGenerationWorkbench({
       setTemperature(nextTemperature);
       setGptImageAdvancedParams(nextAdvancedParams);
       setParallelCount(nextParallelCount);
+      setOutputFormat((useInitial ? initialData?.gptImageOutputFormat : saved.gptImageOutputFormat) === 'svg' ? 'svg' : 'png');
       if (useInitial) {
         // 任务里存的提示词已含构图段落，恢复时剥掉，避免再次提交时重复拼接
         const restoredPrompt = initialData?.layoutSpec ? stripLayoutSection(initialData.prompt || '') : (initialData?.prompt || '');
         setPrompt(restoredPrompt);
         setLayoutSpec(initialData?.layoutSpec || null);
+        setGptImageMarkup(initialData?.gptImageMarkup);
         setPendingFiles((initialData?.refImages || []).map(img => ({
           id: img.id,
           name: img.name,
@@ -277,6 +301,7 @@ export function ImageGenerationWorkbench({
   useEffect(() => {
     if (!settingsReady) return;
     saveJsonToStorage(WORKBENCH_SETTINGS_KEY, {
+      gptImageOutputFormat: activeOutputFormat,
       model,
       outputSize,
       customSize,
@@ -287,7 +312,7 @@ export function ImageGenerationWorkbench({
       gptImageBackground: gptImageAdvancedParams.background,
       parallelCount,
     });
-  }, [model, outputSize, customSize, aspectRatio, temperature, gptImageAdvancedParams, parallelCount, settingsReady]);
+  }, [model, outputSize, customSize, aspectRatio, temperature, gptImageAdvancedParams, parallelCount, settingsReady, activeOutputFormat]);
 
   const handleOptimize = useCallback(() => {
     const textModel = requireDefaultConfiguredTextModel('promptOptimize');
@@ -628,6 +653,7 @@ export function ImageGenerationWorkbench({
       onSubmitImage({
         prompt: finalPrompt,
         files: pendingFiles,
+        gptImageMarkup: activeMarkup,
         outputSize,
         customSize,
         aspectRatio,
@@ -638,6 +664,7 @@ export function ImageGenerationWorkbench({
         gptImageBackground: gptImageAdvancedParams.background,
         parallelCount,
         layoutSpec: carriedLayoutSpec,
+        gptImageOutputFormat: activeOutputFormat,
       });
     } else {
       onSubmitText({
@@ -652,10 +679,12 @@ export function ImageGenerationWorkbench({
         gptImageBackground: gptImageAdvancedParams.background,
         parallelCount,
         layoutSpec: carriedLayoutSpec,
+        gptImageOutputFormat: activeOutputFormat,
       });
     }
 
     setPendingFiles([]);
+    setGptImageMarkup(undefined);
     setPrompt('');
     setUploadError(null);
     setLayoutSpec(null);
@@ -837,6 +866,23 @@ export function ImageGenerationWorkbench({
                   showCopy
                   showUseAsReference={false}
                 />
+                {markupSupported && (
+                  <div className="mt-2 space-y-2 rounded-lg border border-border p-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button type="button" variant="outline" size="xs" disabled={loading} onClick={() => setMarkupEditorOpen(true)}>
+                        {activeMarkup ? '重新标注图 1' : '标注图 1'}
+                      </Button>
+                      {activeMarkup && <Button type="button" variant="ghost" size="xs" onClick={() => setGptImageMarkup(undefined)}>清除标注</Button>}
+                      <span className="text-xs text-muted-foreground">Markup · 圈选修改区域，独立透明图层随图 1 提交</span>
+                    </div>
+                    {activeMarkup && (
+                      <div className="relative inline-block overflow-hidden rounded-md border border-border">
+                        <img src={pendingFiles[0].dataUrl} alt="标注参考图预览" className="max-h-32 max-w-full object-contain" />
+                        <img src={activeMarkup.dataUrl} alt="独立透明标注图层" className="pointer-events-none absolute inset-0 h-full w-full object-contain" />
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -858,6 +904,12 @@ export function ImageGenerationWorkbench({
             </div>
 
             <div className="ml-auto flex w-full justify-end gap-2 px-3 pb-2 sm:w-auto sm:px-4">
+              {nativeOutputSupported && (
+                <label className="mr-auto flex items-center gap-2 text-xs">
+                  <Switch checked={outputFormat === 'svg'} onCheckedChange={checked => setOutputFormat(checked ? 'svg' : 'png')} aria-label="SVG 矢量图" />
+                  SVG 矢量图
+                </label>
+              )}
               <Button variant="ghost" size="icon" onClick={() => setQuickPromptOpen(true)} title="快速提示词">
                 <Zap className="w-4 h-4" />
               </Button>
@@ -952,6 +1004,27 @@ export function ImageGenerationWorkbench({
         initialAssetId={layoutSourceAssetId}
         onConfirm={setLayoutSpec}
       />
+      {markupEditorOpen && markupSupported && pendingFiles[0] && createPortal(
+        <ImageAnnotationEditor
+          key={pendingFiles[0].id}
+          src={pendingFiles[0].dataUrl}
+          title="图 1 · Markup 标注"
+          outputMode="markup"
+          initialPrompt={prompt}
+          onClose={() => setMarkupEditorOpen(false)}
+          onSubmit={(dataUrl, editPrompt, originalPng) => {
+            const first = pendingFiles[0];
+            if (!first || !originalPng) return;
+            setPendingFiles(files => files.map(file => file.id === first.id
+              ? { ...file, dataUrl: originalPng, preview: originalPng, mimeType: 'image/png', name: file.name.replace(/\.[^.]+$/, '') + '.png' }
+              : file));
+            setGptImageMarkup({ referenceId: first.id, dataUrl });
+            setPrompt(editPrompt);
+            setMarkupEditorOpen(false);
+          }}
+        />,
+        document.body,
+      )}
       {pendingTextAsset && createPortal(
         <ConfirmDialog
           title="覆盖当前提示词"

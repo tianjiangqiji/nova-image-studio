@@ -24,6 +24,8 @@ export type BuiltinImagePresetId =
   | 'gemini-3.1-flash-lite-image'
   | 'antigravity-gemini-image'
   | 'gpt-image-2'
+  | 'gpt-image-2.6'
+  | 'gpt-image-2.6-pro'
   | 'grok-imagine-image'
   | 'grok-imagine-image-quality'
   | 'grok-imagine-image-edit'
@@ -171,6 +173,16 @@ export const BUILTIN_IMAGE_PRESETS: Record<BuiltinImagePresetId, BuiltinImagePre
     maxRefImages: 16,
     maxOutputSize: '4K',
     supportsAdvancedParams: true,
+  },
+  'gpt-image-2.6': {
+    id: 'gpt-image-2.6', protocol: 'openai', name: 'GPT Image 2.6',
+    modelId: 'gpt-image-2.6-flare', baseUrl: '',
+    maxRefImages: 6, maxOutputSize: '4K', supportsAdvancedParams: true,
+  },
+  'gpt-image-2.6-pro': {
+    id: 'gpt-image-2.6-pro', protocol: 'openai', name: 'GPT Image 2.6 Pro',
+    modelId: 'gpt-image-2.6-sunburst-pro', baseUrl: '',
+    maxRefImages: 16, maxOutputSize: '4K', supportsAdvancedParams: true,
   },
   'grok-imagine-image': {
     id: 'grok-imagine-image',
@@ -480,7 +492,7 @@ export function resolveDerivedImagePreset(
   if (isGeminiImageModelId(modelId) && (!storedOk || storedOk.startsWith('gpt-image') || storedOk.startsWith('grok-') || storedOk.startsWith('doubao') || storedOk.startsWith('alibaba'))) {
     return inferred;
   }
-  if (isGptImageModelId(modelId)) return 'gpt-image-2';
+  if (isGptImageModelId(modelId)) return inferImagePreset('openai-compatible', modelId);
   return storedOk || inferred;
 }
 

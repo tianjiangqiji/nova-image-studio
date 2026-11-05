@@ -1,5 +1,5 @@
 import type { LayoutSpec } from '@/lib/layout-spec';
-import type { GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
+import type { GptImageOutputFormat, GptImageBackground, GptImageQuality, GptImageStyle } from '@/lib/model-capabilities';
 import { makeStoredBlobRef, deleteStoredBlobs, type ImageDownloadProgressItem } from '@/lib/image-downloader';
 import { openImageDb, IMG_STORE } from '@/lib/image-db';
 
@@ -13,6 +13,11 @@ export interface RefImageData {
   dataUrl: string;
   mimeType: string;
   badge?: string;
+}
+
+export interface GptImageMarkup {
+  referenceId: string;
+  dataUrl: string;
 }
 
 export interface ImageDownloadProgress {
@@ -35,6 +40,7 @@ export interface StoredJob {
   gptImageQuality?: GptImageQuality;
   gptImageStyle?: GptImageStyle;
   gptImageBackground?: GptImageBackground;
+  gptImageOutputFormat?: GptImageOutputFormat;
   created_at: string;
   error?: string;
   networkError?: boolean;
@@ -48,6 +54,7 @@ export interface StoredJob {
   serverTaskId?: string;
   serverTaskAcked?: boolean;
   refImages?: RefImageData[];
+  gptImageMarkup?: GptImageMarkup;
   /** 提交时携带的构图规范，重试/恢复时带回编辑器继续修改 */
   layoutSpec?: LayoutSpec;
   originalPrompt?: string;
@@ -131,6 +138,7 @@ export async function saveImage(result: StoredJob) {
       imageData: images?.[0] || result.imageData,
       images,
       refImages: result.refImages,
+      gptImageMarkup: result.gptImageMarkup,
       error: result.error,
     });
     tx.oncomplete = () => resolve();
@@ -168,6 +176,7 @@ export function saveJobs(jobs: StoredJob[]) {
     delete job.imageData;
     delete job.images;
     delete job.refImages;
+    delete job.gptImageMarkup;
     delete job.blobUrls;
     delete job.imageDownloadProgress;
     return job;

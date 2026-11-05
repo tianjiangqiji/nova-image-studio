@@ -15,9 +15,10 @@ import {
   type ImageModelConfig,
 } from '@/lib/nova-models';
 
-function registered(presetId: keyof typeof BUILTIN_IMAGE_PRESETS, id = presetId): ImageModelConfig {
+function registered(presetId: keyof typeof BUILTIN_IMAGE_PRESETS, id: string = presetId): ImageModelConfig {
   return {
     ...BUILTIN_IMAGE_PRESETS[presetId],
+    builtinPreset: presetId,
     id,
     apiKey: 'test-key',
   };

@@ -6,7 +6,7 @@
 
 import type { ModelId } from '@/lib/gemini-config';
 import type { OutputSize, AspectRatio } from '@/lib/job-store';
-import type { GptImageBackground, GptImageQuality, GptImageStyle, ParallelCount } from '@/lib/model-capabilities';
+import type { GptImageOutputFormat, GptImageBackground, GptImageQuality, GptImageStyle, ParallelCount } from '@/lib/model-capabilities';
 
 export interface ImageFormSettings {
   model: ModelId;
@@ -17,5 +17,6 @@ export interface ImageFormSettings {
   gptImageQuality: GptImageQuality;
   gptImageStyle: GptImageStyle;
   gptImageBackground: GptImageBackground;
+  gptImageOutputFormat?: GptImageOutputFormat;
   parallelCount: ParallelCount;
 }

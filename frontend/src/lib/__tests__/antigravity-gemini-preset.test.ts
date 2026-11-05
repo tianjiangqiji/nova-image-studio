@@ -62,6 +62,7 @@ describe('Antigravity Gemini builtin preset', () => {
   it('does not enable custom size even when the openai 4K preset is registered', () => {
     const config: ImageModelConfig = {
       ...BUILTIN_IMAGE_PRESETS['antigravity-gemini-image'],
+      builtinPreset: 'antigravity-gemini-image',
       id: 'antigravity-gemini-image',
       apiKey: 'test-key',
     };

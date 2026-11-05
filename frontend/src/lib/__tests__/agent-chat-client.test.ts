@@ -89,7 +89,7 @@ function baseInput(protocol: TextProviderProtocol, extra?: Partial<StreamAgentIn
 interface Collected {
   deltas: string[];
   toolActivity: string[];
-  done: { text: string; proposal: { prompt?: string } | null; proposals?: Array<{ prompt?: string }> } | null;
+  done: { text: string; proposal: Parameters<StreamAgentCallbacks['onDone']>[1]; proposals?: Parameters<StreamAgentCallbacks['onDone']>[2] } | null;
   error: Error | null;
 }
 

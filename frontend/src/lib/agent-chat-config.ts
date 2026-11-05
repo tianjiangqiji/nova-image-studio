@@ -247,8 +247,8 @@ export const AGENT_SYSTEM_INSTRUCTIONS = `你是一个图像生成与编辑助�
 - requested_output_size：只有当用户明确要求清晰度/分辨率档位时才填，取值 "512"/"1K"/"2K"/"4K"/"auto" 之一，否则给 null。
 - temperature：用户表达「更随机/更有创意」给偏高值（接近 2），「更精确/更稳定」给偏低值（接近 0），无明确倾向给 1 或 null。
 - parallel_count：用户要「多出几张/多个方案」时给 2-8，否则给 1 或 null。它表示「同一提示词、同一组参考图」重复出几份变体，不代表「分别处理几张图」。
-- gpt_image_quality：当用户明确要求 GPT Image 2 的质量档位时填 "high"/"medium"/"low"，无明确需求给 "auto" 或 null。
-- gpt_image_style：当用户明确要求鲜明、夸张、强表现力时填 "vivid"；要求自然、写实时填 "natural"；无明确需求给 null。
+- gpt_image_quality：当用户明确要求质量档位时填 "high"/"medium"/"low"；GPT Image 2.5/2.6 还支持 "xhigh"/"max"，其他版本不能使用这两档。无明确需求给 "auto" 或 null。
+- 用户指定鲜明、夸张、自然、写实等风格时，直接写进 prompt。
 - gpt_image_background：用户明确要求透明背景、抠图、无背景时填 "transparent"；明确要求实底/不透明时填 "opaque"；否则给 "auto" 或 null。
 - 不要假设具体像素尺寸，也不要因为某个比例「可能不被支持」而回避；系统会自动贴合到最近的合法比例与档位。
 
@@ -337,13 +337,8 @@ export const PROPOSE_IMAGE_ACTION_TOOL = {
       },
       gpt_image_quality: {
         type: ['string', 'null'],
-        enum: ['auto', 'high', 'medium', 'low', null],
-        description: 'GPT Image 2 质量参数；无明确需求给 auto 或 null',
-      },
-      gpt_image_style: {
-        type: ['string', 'null'],
-        enum: ['vivid', 'natural', null],
-        description: 'GPT Image 2 风格参数；自动时给 null',
+        enum: ['auto', 'max', 'xhigh', 'high', 'medium', 'low', null],
+        description: 'GPT Image 质量参数；max/xhigh 仅限 2.5/2.6，无明确需求给 auto 或 null',
       },
       gpt_image_background: {
         type: ['string', 'null'],
@@ -368,7 +363,6 @@ export const PROPOSE_IMAGE_ACTION_TOOL = {
       'temperature',
       'parallel_count',
       'gpt_image_quality',
-      'gpt_image_style',
       'gpt_image_background',
       'requested_model_id',
     ],

@@ -35,8 +35,10 @@ type Annotation =
 interface ImageAnnotationEditorProps {
   src: string;
   title?: string;
+  outputMode?: 'composite' | 'markup';
+  initialPrompt?: string;
   onClose: () => void;
-  onSubmit: (annotatedDataUrl: string, prompt: string) => void;
+  onSubmit: (annotatedDataUrl: string, prompt: string, originalPng?: string) => void;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -284,11 +286,25 @@ function drawAnnotation(ctx: CanvasRenderingContext2D, ann: Annotation): void {
   }
 }
 
+function scaleAnnotation(ann: Annotation, scaleX: number, scaleY: number): Annotation {
+  return {
+    ...ann,
+    size: ann.size * Math.max(scaleX, scaleY),
+    ...(ann.type === 'brush'
+      ? { points: ann.points.map(p => ({ x: p.x * scaleX, y: p.y * scaleY })) }
+      : {
+          start: { x: ann.start.x * scaleX, y: ann.start.y * scaleY },
+          end: { x: ann.end.x * scaleX, y: ann.end.y * scaleY },
+        }),
+  };
+}
+
 function compositeImage(
   img: HTMLImageElement,
   annotations: Annotation[],
   displayWidth: number,
   displayHeight: number,
+  transparent = false,
 ): string {
   const canvas = document.createElement('canvas');
   canvas.width = img.naturalWidth;
@@ -297,24 +313,14 @@ function compositeImage(
   if (!ctx) throw new Error('当前浏览器不支持 Canvas 2D');
 
   // Draw the original image
-  ctx.drawImage(img, 0, 0);
+  if (!transparent) ctx.drawImage(img, 0, 0);
 
   // Scale annotations from display coordinates to natural resolution
   const scaleX = img.naturalWidth / displayWidth;
   const scaleY = img.naturalHeight / displayHeight;
 
   for (const ann of annotations) {
-    const scaled: Annotation = {
-      ...ann,
-      size: ann.size * Math.max(scaleX, scaleY),
-      ...(ann.type === 'brush'
-        ? { points: ann.points.map(p => ({ x: p.x * scaleX, y: p.y * scaleY })) }
-        : {
-            start: { x: ann.start.x * scaleX, y: ann.start.y * scaleY },
-            end: { x: ann.end.x * scaleX, y: ann.end.y * scaleY },
-          }),
-    };
-    drawAnnotation(ctx, scaled);
+    drawAnnotation(ctx, scaleAnnotation(ann, scaleX, scaleY));
   }
 
   return canvas.toDataURL('image/png');
@@ -347,12 +353,12 @@ function makeId(): string {
 
 // ── Main Component ─────────────────────────────────────────────────────────
 
-export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAnnotationEditorProps) {
+export function ImageAnnotationEditor({ src, title, outputMode = 'composite', initialPrompt = '', onClose, onSubmit }: ImageAnnotationEditorProps) {
   const [tool, setTool] = useState<Tool>('brush');
   const [color, setColor] = useState(DEFAULT_COLOR);
   const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH_SIZE);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const [userInput, setUserInput] = useState('');
+  const [userInput, setUserInput] = useState(initialPrompt);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
   const [naturalSize, setNaturalSize] = useState({ width: 0, height: 0 });
@@ -360,12 +366,14 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
   const [samplingColor, setSamplingColor] = useState(false);
   const [closeConfirmOpen, setCloseConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageElRef = useRef<HTMLImageElement | null>(null);
   const drawingRef = useRef(false);
   const draftRef = useRef<Annotation | null>(null);
+  const displaySizeRef = useRef({ width: 0, height: 0 });
 
   // ── Body scroll lock (same as GifFrameTuner) ──
   useEffect(() => {
@@ -432,7 +440,16 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
         dh = ch - margin;
         dw = dh * aspectRatio;
       }
-      setDisplaySize({ width: Math.max(1, Math.floor(dw)), height: Math.max(1, Math.floor(dh)) });
+      const next = { width: Math.max(1, Math.floor(dw)), height: Math.max(1, Math.floor(dh)) };
+      const previous = displaySizeRef.current;
+      if (previous.width && previous.height && (previous.width !== next.width || previous.height !== next.height)) {
+        const sx = next.width / previous.width;
+        const sy = next.height / previous.height;
+        setAnnotations(items => items.map(ann => scaleAnnotation(ann, sx, sy)));
+        if (draftRef.current) draftRef.current = scaleAnnotation(draftRef.current, sx, sy);
+      }
+      displaySizeRef.current = next;
+      setDisplaySize(next);
     };
     calculate();
     const ro = new ResizeObserver(calculate);
@@ -580,15 +597,23 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
     const img = imageElRef.current;
     if (!img || !img.complete || annotations.length === 0 || !userInput.trim() || displaySize.width === 0) return;
     setSubmitting(true);
+    setSubmitError('');
     try {
-      const dataUrl = compositeImage(img, annotations, displaySize.width, displaySize.height);
-      const prompt = constructPrompt(userInput.trim(), annotations);
-      onSubmit(dataUrl, prompt);
+      const markupMode = outputMode === 'markup';
+      if (markupMode && img.naturalWidth * img.naturalHeight > 16_777_216) {
+        throw new Error('标注参考图不能超过 16,777,216 像素，请先缩小参考图。');
+      }
+      const dataUrl = compositeImage(img, annotations, displaySize.width, displaySize.height, markupMode);
+      const prompt = markupMode ? userInput.trim() : constructPrompt(userInput.trim(), annotations);
+      // 浏览器解码后按原始像素导出 PNG，统一 EXIF 方向，确保首图与透明标注严格对齐。
+      const originalPng = markupMode ? compositeImage(img, [], displaySize.width, displaySize.height) : undefined;
+      onSubmit(dataUrl, prompt, originalPng);
     } catch (err) {
       console.error('标注图片合成失败:', err);
+      setSubmitError(err instanceof Error ? err.message : '标注导出失败，请重试');
       setSubmitting(false);
     }
-  }, [annotations, userInput, displaySize, onSubmit]);
+  }, [annotations, userInput, displaySize, onSubmit, outputMode]);
 
   // ── Esc to close ──
   const requestClose = useCallback(() => {
@@ -816,19 +841,20 @@ export function ImageAnnotationEditor({ src, title, onClose, onSubmit }: ImageAn
               onClick={handleSubmit}
               disabled={!canSubmit}
               className="gap-1.5 shrink-0"
-              title="跳转到生图工作台并自动构造提示词"
+              title={outputMode === 'markup' ? '保存独立透明标注并返回工作台' : '跳转到生图工作台并自动构造提示词'}
             >
               {submitting ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Wand2 className="h-4 w-4" />
               )}
-              开始修改
+              {outputMode === 'markup' ? '应用标注' : '开始修改'}
             </Button>
           </div>
+          {submitError && <p role="alert" className="text-xs text-destructive">{submitError}</p>}
           {annotations.length > 0 && userInput.trim() && (
             <p className="text-[11px] text-muted-foreground">
-              预览提示词：{constructPrompt(userInput.trim(), annotations)}
+              预览提示词：{outputMode === 'markup' ? userInput.trim() : constructPrompt(userInput.trim(), annotations)}
             </p>
           )}
           {annotations.length === 0 && (

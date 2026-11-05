@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { NativeGifResultPanel } from './NativeGifResultPanel';
 import {
   AlertCircle,
   Crop,
@@ -26,6 +27,7 @@ import { GIF_MAX_FRAME_PADDING, type ActiveGifJob, type GifStatus } from '@/lib/
 import type { ImageActionPayload } from '@/lib/image-actions';
 
 export interface GifReviewPanelProps {
+  nativeGif?: boolean;
   status: GifStatus;
   job: ActiveGifJob | null;
   gridImageUrl: string | null;
@@ -56,6 +58,8 @@ export function GifReviewPanel(props: GifReviewPanelProps) {
   const [delayPopoverOpen, setDelayPopoverOpen] = useState(false);
   const [loopPopoverOpen, setLoopPopoverOpen] = useState(false);
   const [paddingPopoverOpen, setPaddingPopoverOpen] = useState(false);
+
+  if (props.job ? props.job.nativeGif : props.nativeGif) return <NativeGifResultPanel {...props} />;
 
   return (
     <div className="rounded-xl border border-border bg-card p-4 shadow-md">

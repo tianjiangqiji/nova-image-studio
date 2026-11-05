@@ -2,6 +2,8 @@ const http = require('http');
 const net = require('net');
 const { createHash, randomUUID, timingSafeEqual } = require('crypto');
 const { spawn } = require('child_process');
+const { validateGptImageMarkup } = require('./gpt-image-markup');
+const { detectImageMime, decodeImagePayload, getImageExtension, isSvgText, validateImageOutput, buildImageOutputPrompt, extractSvgPayload, createNativeSvgRequest, extractChatImagePayload } = require('./image-output');
 const fs = require('fs');
 const path = require('path');
 const next = process.env.NODE_ENV !== 'production' ? require('next') : null;
@@ -130,12 +132,10 @@ const IMAGE_STREAM_PARTIAL_IMAGES = Math.min(3, Math.max(0, Number.parseInt(proc
 const IMAGE_STREAM_UNSUPPORTED_PATTERN = /(?:(?:stream|partial_images).*(?:unsupported|not supported|unknown|unrecognized|invalid)|(?:unsupported|not supported|unknown|unrecognized|invalid).*(?:stream|partial_images)|(?:stream|partial_images).*(?:不支持|未知|无效)|(?:不支持|未知|无效).*(?:stream|partial_images))/i;
 // 开源版：不再硬编码模型列表，由前端通过 protocol 字段指定协议类型
 const VALID_PROTOCOLS = new Set(['google', 'openai', 'grok', 'doubao', 'alibaba-dashscope']);
-const GPT_IMAGE_QUALITIES = new Set(['auto', 'high', 'medium', 'low']);
-const GPT_IMAGE_STYLES = new Set(['auto', 'vivid', 'natural']);
+const GPT_IMAGE_QUALITIES = new Set(['auto', 'max', 'xhigh', 'high', 'medium', 'low']);
 const GPT_IMAGE_BACKGROUNDS = new Set(['auto', 'transparent', 'opaque']);
 const DEFAULT_GPT_IMAGE_ADVANCED_PARAMS = {
   quality: 'auto',
-  style: 'auto',
   background: 'auto',
 };
 const PROMPT_GALLERY_PASSWORD_SALT = 'nova-pg-2026';
@@ -152,6 +152,7 @@ const IMAGE_DIR = process.env.NOVA_IMAGE_DIR || path.join(__dirname, 'nova-image
 const CDP_ENABLED = String(process.env.NOVA_CDP_ENABLED ?? 'false').toLowerCase() === 'true';
 const CDP_DIR = process.env.NOVA_CDP_DIR || path.join(path.dirname(IMAGE_DIR), 'cdp-products');
 const taskRefImages = new Map();
+const taskMarkups = new Map();
 
 // CDP 图片自动清理：保留最近 7 天或最多 100 张，防止无限累积
 function cleanupOldCdpImages() {
@@ -529,6 +530,7 @@ function cleanupTaskRuntimeState(taskId) {
   }
   apiKeys.delete(taskId);
   taskRefImages.delete(taskId);
+  taskMarkups.delete(taskId);
   taskSources.delete(taskId);
   pluginTaskProgress.delete(taskId);
 }
@@ -757,18 +759,13 @@ function purgeCdpProductFiles(files) {
   return deleted;
 }
 
-function getImageExtension(mimeType) {
-  if (mimeType?.includes('jpeg') || mimeType?.includes('jpg')) return 'jpg';
-  if (mimeType?.includes('webp')) return 'webp';
-  return 'png';
-}
-
 function saveImageToDisk(taskId, itemIndex, subIndex, imageBuffer, mimeType) {
-  const ext = getImageExtension(mimeType);
+  const actualMimeType = detectImageMime(imageBuffer, mimeType);
+  const ext = getImageExtension(actualMimeType);
   const fileName = `${taskId}-${itemIndex}-${subIndex}.${ext}`;
   const filePath = path.join(IMAGE_DIR, fileName);
   fs.writeFileSync(filePath, imageBuffer);
-  return { filePath, httpUrl: `/api/nova/images/${taskId}/${itemIndex}` };
+  return { filePath, httpUrl: `/api/nova/images/${taskId}/${itemIndex}`, mimeType: actualMimeType };
 }
 
 async function downloadUrlToDisk(taskId, itemIndex, subIndex, imageUrl) {
@@ -974,7 +971,7 @@ function serveStatic(req, res, pathname) {
 
 const MAX_REQUEST_BODY_BYTES = 10 * 1024 * 1024; // 10MB
 
-function readJsonBody(req) {
+function readJsonBody(req, maxBytes = MAX_REQUEST_BODY_BYTES) {
   return new Promise((resolve, reject) => {
     let raw = '';
     let aborted = false;
@@ -982,7 +979,7 @@ function readJsonBody(req) {
     req.on('data', chunk => {
       if (aborted) return;
       raw += chunk;
-      if (raw.length > MAX_REQUEST_BODY_BYTES) {
+      if (Buffer.byteLength(raw, 'utf8') > maxBytes) {
         aborted = true;
         raw = ''; // 释放已缓冲内存
         // 不再 req.destroy()：直接重置连接会让客户端收到 ERR_CONNECTION_RESET，
@@ -1061,12 +1058,10 @@ function validateEnumValue(value, validValues, fieldName) {
 
 function normalizeGptImageAdvancedParams(params = {}) {
   const quality = validateEnumValue(params.gptImageQuality, GPT_IMAGE_QUALITIES, 'quality');
-  const style = validateEnumValue(params.gptImageStyle, GPT_IMAGE_STYLES, 'style');
   const background = validateEnumValue(params.gptImageBackground, GPT_IMAGE_BACKGROUNDS, 'background');
 
   return {
     quality: quality || DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.quality,
-    style: style || DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.style,
     background: background || DEFAULT_GPT_IMAGE_ADVANCED_PARAMS.background,
   };
 }
@@ -1084,6 +1079,8 @@ function validateCreatePayload(body) {
   if (!Array.isArray(body.images)) body.images = [];
   body.baseUrl = normalizeProtocolBaseUrl(body.protocol, body.baseUrl);
   if (!body.baseUrl) throw new Error('缺少 API 基础地址');
+  validateGptImageMarkup(body);
+  body.gptImageOutputFormat = validateImageOutput(body);
   // 开源版：不做模型级参数规范化，前端负责传递正确的参数，后端无条件透传
 }
 
@@ -1110,8 +1107,8 @@ function createTask(body, req) {
     temperature: body.temperature,
     model: body.model,
     gptImageQuality: body.gptImageQuality,
-    gptImageStyle: body.gptImageStyle,
     gptImageBackground: body.gptImageBackground,
+    gptImageOutputFormat: body.gptImageOutputFormat,
     parallelCount: body.parallelCount,
     images: body.images.map(img => ({ mimeType: img.mimeType })),
   };
@@ -1132,6 +1129,7 @@ function createTask(body, req) {
 
   apiKeys.set(taskId, body.apiKey);
   taskRefImages.set(taskId, body.images);
+  if (body.gptImageMarkup) taskMarkups.set(taskId, body.gptImageMarkup);
   taskSources.set(taskId, source);
   // 递增 pending 计数
   if (source.ip) pendingCountByIp.set(source.ip, (pendingCountByIp.get(source.ip) || 0) + 1);
@@ -1264,7 +1262,7 @@ function getGptImageRequestAdvancedParams(request) {
 }
 
 function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) {
-  const prompt = request.prompt;
+  const prompt = buildImageOutputPrompt(request);
   const antigravityGemini = isAntigravityGeminiImageModel(request.model);
   const advancedParams = antigravityGemini ? null : getGptImageRequestAdvancedParams(request);
   const stream = antigravityGemini ? false : Boolean(options.stream);
@@ -1332,10 +1330,8 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
     if (advancedParams) {
       formData.append('quality', advancedParams.quality);
       formData.append('background', advancedParams.background);
-      formData.append('output_format', 'png');
-      if (advancedParams.style === 'vivid' || advancedParams.style === 'natural') {
-        formData.append('style', advancedParams.style);
-      }
+      if (!request.gptImageOutputFormat || request.gptImageOutputFormat === 'png') formData.append('output_format', 'png');
+      else formData.append('response_format', 'b64_json');
     }
     if (resolvedSize) formData.append('size', resolvedSize);
     request.images.forEach((img, index) => {
@@ -1346,6 +1342,11 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
       const filename = `image-${index}.${extension}`;
       formData.append('image', blob, filename);
     });
+    if (request.gptImageMarkup) {
+      formData.append('markup', new Blob([
+        Buffer.from(request.gptImageMarkup.data, 'base64'),
+      ], { type: 'image/png' }), 'markup.png');
+    }
 
     return {
       method: 'POST',
@@ -1364,8 +1365,8 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
     ...(advancedParams ? {
       quality: advancedParams.quality,
       background: advancedParams.background,
-      output_format: 'png',
-      ...(advancedParams.style === 'vivid' || advancedParams.style === 'natural' ? { style: advancedParams.style } : {}),
+      ...(!request.gptImageOutputFormat || request.gptImageOutputFormat === 'png'
+        ? { output_format: 'png' } : { response_format: 'b64_json' }),
     } : {}),
     ...(antigravityGemini ? {
       ...(resolvedSize ? { aspect_ratio: resolvedSize } : {}),
@@ -1465,7 +1466,7 @@ function getUpstreamErrorText(text, status) {
 
 function normalizeImagePayloadValue(imageData) {
   if (!imageData || typeof imageData !== 'string') return undefined;
-  if (imageData.startsWith('data:image')) return imageData.split(',')[1] || imageData;
+  if (imageData.startsWith('data:image')) return imageData;
   if (/^https?:\/\//i.test(imageData)) return `URL:${imageData}`;
   return imageData;
 }
@@ -1482,11 +1483,14 @@ function getImagePayloadValue(data, depth = 0) {
   if (typeof data !== 'object') return undefined;
 
   const firstImage = Array.isArray(data.data)
-    ? data.data.find(item => item && typeof item === 'object' && (item.b64_json || item.url || item.image_url))
+    ? data.data.find(item => item && typeof item === 'object' && (item.b64_json || item.url || item.image_url || item.svg))
     : undefined;
-  const imageData = firstImage?.b64_json || firstImage?.url || firstImage?.image_url
-    || data.b64_json || data.url || data.image_url;
+  const imageData = firstImage?.b64_json || firstImage?.url || firstImage?.image_url || firstImage?.svg
+    || data.b64_json || data.url || data.image_url || data.svg;
   if (imageData) return imageData;
+
+  const chatImage = extractChatImagePayload(data);
+  if (chatImage) return chatImage;
 
   return getImagePayloadValue(data.result, depth + 1)
     || getImagePayloadValue(data.response, depth + 1)
@@ -1550,9 +1554,16 @@ function extractImagePayloadFromEventStream(text) {
   throw new Error('响应中无图片数据');
 }
 
-async function parseGptImageResponse(response) {
+async function parseGptImageResponse(response, outputFormat) {
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (response.ok && contentType.startsWith('image/') && !contentType.includes('svg')) {
+    return `data:${contentType.split(';')[0]};base64,${Buffer.from(await response.arrayBuffer()).toString('base64')}`;
+  }
   const responseText = await response.text();
+  if (outputFormat === 'svg' && (response.ok || response.status === 400)) {
+    const svg = extractSvgPayload(parseJsonSafely(responseText), response.status);
+    if (svg) return svg;
+  }
 
   if (!response.ok) {
     const errorText = getUpstreamErrorText(responseText, response.status);
@@ -1562,6 +1573,8 @@ async function parseGptImageResponse(response) {
   if (contentType.includes('text/event-stream')) {
     return extractImagePayloadFromEventStream(responseText);
   }
+
+  if (isSvgText(responseText)) return responseText;
 
   if (isLikelyHtmlResponse(responseText)) {
     throw new Error('上游返回了 HTML 页面而不是 JSON。通常是 baseUrl 配置错误、请求被站点网关拦截，或该地址并非兼容的图片 API。');
@@ -1586,14 +1599,15 @@ function isImageStreamUnsupportedError(error) {
 
 async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
   const baseUrl = options.baseUrl || resolveNovaApiBaseUrl();
-  const endpoint = request.mode === 'image-to-image'
+  const nativeSvg = request.gptImageOutputFormat === 'svg';
+  const endpoint = nativeSvg ? '/v1/chat/completions' : request.mode === 'image-to-image'
     ? '/v1/images/edits'
     : '/v1/images/generations';
   const response = await fetchWithTimeout(
     `${baseUrl}${endpoint}`,
-    createGptImageRequestInit(apiKey, request, resolvedSize, options)
+    nativeSvg ? createNativeSvgRequest(apiKey, request, resolvedSize) : createGptImageRequestInit(apiKey, request, resolvedSize, options)
   );
-  return parseGptImageResponse(response);
+  return parseGptImageResponse(response, request.gptImageOutputFormat);
 }
 
 function getGrokResolution(outputSize) {
@@ -1937,21 +1951,26 @@ async function generateSingleImage(apiKey, request, taskId, index) {
     const image = await generateNovaImage(apiKey, request);
     const expanded = image.startsWith('MULTI_URL:') ? image.substring(10).split('|||').map(url => `URL:${url}`) : [image];
     const diskRefs = [];
+    const warnings = [];
     for (let subIdx = 0; subIdx < expanded.length; subIdx++) {
       const img = expanded[subIdx];
+      let result;
       if (img.startsWith('URL:')) {
         const remoteUrl = img.substring(4);
-        const result = await downloadUrlToDisk(taskId, index, subIdx, remoteUrl);
-        diskRefs.push(`URL:${result.httpUrl}`);
+        result = await downloadUrlToDisk(taskId, index, subIdx, remoteUrl);
       } else {
-        const buffer = Buffer.from(img, 'base64');
-        const result = saveImageToDisk(taskId, index, subIdx, buffer, 'image/png');
-        diskRefs.push(`URL:${result.httpUrl}`);
+        const { bytes, mimeType } = decodeImagePayload(img);
+        result = saveImageToDisk(taskId, index, subIdx, bytes, mimeType);
+      }
+      diskRefs.push(`URL:${result.httpUrl}`);
+      const requested = request.gptImageOutputFormat;
+      if ((requested === 'svg' || requested === 'gif') && getImageExtension(result.mimeType) !== requested) {
+        warnings.push(`请求了 ${requested.toUpperCase()}，但上游返回 ${getImageExtension(result.mimeType).toUpperCase()}。已保留原始文件，未转换格式。`);
       }
     }
     db.prepare("UPDATE task_items SET status = 'completed', image_data = ?, completed_at = ? WHERE task_id = ? AND item_index = ?")
       .run(JSON.stringify(diskRefs), new Date().toISOString(), taskId, index);
-    return { success: true, images: diskRefs };
+    return { success: true, images: diskRefs, warnings };
   } catch (error) {
     const message = normalizeError(error);
     db.prepare("UPDATE task_items SET status = 'failed', error = ?, completed_at = ? WHERE task_id = ? AND item_index = ?")
@@ -1960,6 +1979,11 @@ async function generateSingleImage(apiKey, request, taskId, index) {
   }
 }
 
+/**
+ * 视频任务执行器：调上游创建，然后由后端自己轮询到终态。
+ * 名额由 drainQueue 的 .finally() 在本函数返回时释放，所以「持有名额」等价于
+ * 「本函数未返回」——不能把轮询交给前端 GET，否则关掉标签页名额就永久泄漏。
+ */
 async function runTask(taskId) {
   const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId);
   const apiKey = apiKeys.get(taskId);
@@ -1991,6 +2015,7 @@ async function runTaskBody(taskId, task, apiKey) {
   if (refImages && refImages.length > 0) {
     request.images = refImages;
   }
+  request.gptImageMarkup = taskMarkups.get(taskId);
   db.prepare("UPDATE tasks SET status = 'processing' WHERE id = ?").run(taskId);
   broadcastTask(taskId);
   broadcastQueueStatus();
@@ -2011,9 +2036,11 @@ async function runTaskBody(taskId, task, apiKey) {
   // 汇总结果
   const images = [];
   const errors = [];
+  const warnings = [];
   for (const result of itemResults) {
     if (result.status === 'fulfilled' && result.value.success) {
       images.push(...result.value.images);
+      warnings.push(...(result.value.warnings || []));
     } else {
       const msg = result.status === 'fulfilled'
         ? result.value.error
@@ -2025,7 +2052,8 @@ async function runTaskBody(taskId, task, apiKey) {
   const completedAt = new Date().toISOString();
   const expiresAt = new Date(Date.now() + TASK_TTL_MS).toISOString();
   if (images.length > 0) {
-    const warning = errors.length > 0 ? `${errors.length} 张图片生成失败: ${errors.join('; ')}` : null;
+    if (errors.length > 0) warnings.push(`${errors.length} 张图片生成失败: ${errors.join('; ')}`);
+    const warning = warnings.length ? [...new Set(warnings)].join('；') : null;
     db.prepare(`
       UPDATE tasks SET status = 'completed', result_json = ?, warning = ?, completed_at = ?, expires_at = ? WHERE id = ?
     `).run(JSON.stringify({ images }), warning, completedAt, expiresAt, taskId);
@@ -2804,7 +2832,7 @@ async function handleApi(req, res, pathname, searchParams) {
         // 常见情况：subIndex=0、扩展名 png/jpg/webp，直接拼路径命中，
         // 避免对整个 IMAGE_DIR 做同步 readdir 全目录扫描（随图片数线性变慢）。
         let filePath = null;
-        for (const ext of ['png', 'jpg', 'webp']) {
+        for (const ext of ['png', 'jpg', 'webp', 'gif', 'svg', 'avif']) {
           const candidate = path.join(IMAGE_DIR, `${taskId}-${index}-0.${ext}`);
           if (fs.existsSync(candidate)) { filePath = candidate; break; }
         }
@@ -2825,6 +2853,10 @@ async function handleApi(req, res, pathname, searchParams) {
           'Content-Type': getContentType(filePath),
           'Content-Length': stat.size,
           'Cache-Control': 'private, max-age=3600',
+          'X-Content-Type-Options': 'nosniff',
+          ...(path.extname(filePath) === '.svg' ? {
+            'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:",
+          } : {}),
         });
       } catch {
         sendJson(res, 404, { error: 'Not Found' });
@@ -3377,7 +3409,8 @@ async function handleApi(req, res, pathname, searchParams) {
     }
 
     if (req.method === 'POST' && apiPathname === '/api/nova/tasks') {
-      const body = await readJsonBody(req);
+      // 独立覆盖层可达 50MB；为原尺寸 PNG 与 base64 编码保留传输余量。
+      const body = await readJsonBody(req, 256 * 1024 * 1024);
       const taskId = createTask(body, req);
       sendJson(res, 202, { taskId });
       return true;

@@ -67,6 +67,7 @@ beforeEach(() => {
       reversePrompt: '',
       agent: '',
       promptOptimize: '',
+        layoutSpec: '',
       imageDescribe: '',
       sliceDecomposition: '',
       sliceReconstruct: '',
