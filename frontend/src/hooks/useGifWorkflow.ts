@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createNovaTask, getNovaTask, ackNovaTask, resolveImageTaskProvider, type ImageReference } from '@/lib/ccode-task-client';
 import { novaTaskSocket } from '@/lib/ccode-task-socket';
 import { resolveImagePayloadToBlob } from '@/lib/image-actions';
-import { buildNativeGifPrompt, inspectNativeGif } from '@/lib/native-gif';
+import { buildNativeGifPrompt, inspectNativeGif, normalizeNativeGifParams } from '@/lib/native-gif';
 import { generateUUID } from '@/lib/uuid';
 import {
   downloadAndStoreImages,
@@ -36,6 +36,8 @@ import {
 
 export interface SubmitInput {
   nativeGif?: boolean;
+  gifFrameCount?: number;
+  gifFrameDurationMs?: number;
   prompt: string;
   loop: boolean;
   closedLoop: boolean;
@@ -336,6 +338,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     setGifBlob(null);
 
     const nativeGif = supportsNativeImageOutput(input.model) && input.nativeGif !== false;
+    const nativeParams = nativeGif ? normalizeNativeGifParams(input.gifFrameCount, input.gifFrameDurationMs) : {};
     const template = nativeGif ? null : await loadGifTemplate();
     const refsForSubmit = nativeGif ? [] : input.refImages.slice(0, 6);
     const advancedParams = getGptImageAdvancedParamsForModel(input.model, {
@@ -358,6 +361,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
       closedLoop: input.closedLoop,
       model: input.model,
       nativeGif,
+      ...nativeParams,
       gptImageQuality: advancedParams.quality,
       gptImageStyle: advancedParams.style,
       gptImageBackground: advancedParams.background,
@@ -384,6 +388,7 @@ export function useGifWorkflow(): UseGifWorkflowResult {
         customSize: nativeGif ? undefined : GIF_GRID_CUSTOM_SIZE,
         aspectRatio: nativeGif ? 'auto' : GIF_GRID_ASPECT_RATIO,
         gptImageOutputFormat: nativeGif ? 'gif' : 'png',
+        ...nativeParams,
         temperature: 1,
         model: provider.modelId,
         gptImageQuality: advancedParams.quality,

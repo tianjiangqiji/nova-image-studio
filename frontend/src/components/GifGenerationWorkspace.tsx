@@ -40,6 +40,7 @@ import {
 
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { useGifWorkflow } from '@/hooks/useGifWorkflow';
+import { DEFAULT_NATIVE_GIF_FRAME_COUNT, DEFAULT_NATIVE_GIF_FRAME_DURATION_MS, normalizeNativeGifParams } from '@/lib/native-gif';
 import type { ImageActionPayload } from '@/lib/image-actions';
 import { getDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 
@@ -55,6 +56,8 @@ const SETTINGS_KEY = 'nova-gif-settings';
 
 interface PersistedSettings {
   nativeGif: boolean;
+  gifFrameCount: number;
+  gifFrameDurationMs: number;
   model: GifModel;
   loop: boolean;
   frameDelayMs: number;
@@ -73,6 +76,8 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState<GifModel>(getDefaultGifModelId());
   const [nativeGif, setNativeGif] = useState(true);
+  const [gifFrameCount, setGifFrameCount] = useState(DEFAULT_NATIVE_GIF_FRAME_COUNT);
+  const [gifFrameDurationMs, setGifFrameDurationMs] = useState(DEFAULT_NATIVE_GIF_FRAME_DURATION_MS);
   const nativeGifActive = supportsNativeImageOutput(model) && nativeGif;
   const [gptImageAdvancedParams, setGptImageAdvancedParams] = useState<GptImageAdvancedParams>(DEFAULT_GPT_IMAGE_ADVANCED_PARAMS);
   const [loop, setLoop] = useState(true);
@@ -179,6 +184,9 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
         setFramePadding(saved.framePadding);
       }
       setNativeGif(saved.nativeGif !== false);
+      const nativeParams = normalizeNativeGifParams(saved.gifFrameCount, saved.gifFrameDurationMs);
+      setGifFrameCount(nativeParams.gifFrameCount);
+      setGifFrameDurationMs(nativeParams.gifFrameDurationMs);
       setSettingsReady(true);
     });
 
@@ -191,6 +199,8 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     if (!settingsReady) return;
     saveJsonToStorage(SETTINGS_KEY, {
       nativeGif,
+      gifFrameCount,
+      gifFrameDurationMs,
       model,
       loop,
       closedLoop,
@@ -201,7 +211,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
       gptImageStyle: gptImageAdvancedParams.style,
       gptImageBackground: gptImageAdvancedParams.background,
     });
-  }, [model, loop, closedLoop, frameDelayMs, loopCount, framePadding, gptImageAdvancedParams, settingsReady, nativeGif]);
+  }, [model, loop, closedLoop, frameDelayMs, loopCount, framePadding, gptImageAdvancedParams, settingsReady, nativeGif, gifFrameCount, gifFrameDurationMs]);
 
   useEffect(() => {
     if (!workflow.startedAt || (workflow.job?.status !== 'generating_grid' && workflow.job?.status !== 'generating_gif')) {
@@ -320,6 +330,8 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
 
   const submitInput = useMemo(() => ({
     nativeGif: nativeGifActive,
+    gifFrameCount,
+    gifFrameDurationMs,
     prompt,
     loop,
     closedLoop,
@@ -336,7 +348,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     frameDelayMs,
     loopCount,
     framePadding,
-  }), [prompt, loop, closedLoop, model, gptImageAdvancedParams, refFiles, frameDelayMs, loopCount, framePadding, nativeGifActive]);
+  }), [prompt, loop, closedLoop, model, gptImageAdvancedParams, refFiles, frameDelayMs, loopCount, framePadding, nativeGifActive, gifFrameCount, gifFrameDurationMs]);
 
   const performSubmit = useCallback(async () => {
     if (!hasApiKey) {
@@ -417,7 +429,11 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     }
   }, [workflow]);
 
-  const canSubmit = prompt.trim().length > 0 && !generating && hasApiKey && gifModelOptions.length > 0;
+  const nativeParamsValid = !nativeGifActive || (
+    Number.isSafeInteger(gifFrameCount) && gifFrameCount > 0
+    && Number.isSafeInteger(gifFrameDurationMs) && gifFrameDurationMs > 0
+  );
+  const canSubmit = prompt.trim().length > 0 && !generating && hasApiKey && gifModelOptions.length > 0 && nativeParamsValid;
   const refImageCount = refFiles.length;
   const maxedOut = refImageCount >= GIF_MAX_REF_IMAGES;
 
@@ -455,6 +471,10 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
           model={model}
           nativeGif={nativeGifActive}
           onNativeGifChange={setNativeGif}
+          gifFrameCount={gifFrameCount}
+          onGifFrameCountChange={setGifFrameCount}
+          gifFrameDurationMs={gifFrameDurationMs}
+          onGifFrameDurationMsChange={setGifFrameDurationMs}
           modelOptions={gifModelOptions}
           modelPopoverOpen={modelPopoverOpen}
           onModelPopoverOpenChange={setModelPopoverOpen}

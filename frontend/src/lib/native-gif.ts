@@ -1,3 +1,15 @@
+export const DEFAULT_NATIVE_GIF_FRAME_COUNT = 20;
+export const DEFAULT_NATIVE_GIF_FRAME_DURATION_MS = 200;
+
+export function normalizeNativeGifParams(frameCount: unknown, frameDurationMs: unknown) {
+  const positiveInteger = (value: unknown, fallback: number) =>
+    typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : fallback;
+  return {
+    gifFrameCount: positiveInteger(frameCount, DEFAULT_NATIVE_GIF_FRAME_COUNT),
+    gifFrameDurationMs: positiveInteger(frameDurationMs, DEFAULT_NATIVE_GIF_FRAME_DURATION_MS),
+  };
+}
+
 /** Count actual image descriptors, skipping compressed sub-blocks and extensions. */
 export function countGifFrames(bytes: Uint8Array): number | null {
   if (bytes.length < 13 || !/^GIF8[79]a$/.test(String.fromCharCode(...bytes.slice(0, 6)))) return null;

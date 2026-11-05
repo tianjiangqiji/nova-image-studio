@@ -21,6 +21,8 @@ export interface ActiveGifJob {
   closedLoop: boolean;
   model: string;
   nativeGif?: boolean;
+  gifFrameCount?: number;
+  gifFrameDurationMs?: number;
   resultMimeType?: string;
   resultFrameCount?: number;
   warning?: string;

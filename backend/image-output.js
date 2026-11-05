@@ -39,6 +39,18 @@ function validateImageOutput(request) {
   if (format !== 'png' && (request.protocol !== 'openai' || !supportsNativeImageOutput(request.model))) throw new Error('原生 SVG/GIF 输出需要 GPT Image 2.6 系列模型');
   if (format === 'gif' && (request.mode !== 'text-to-image' || request.images?.length)) throw new Error('原生 GIF 仅支持文字生成，不支持参考图');
   if (format !== 'png' && request.gptImageMarkup) throw new Error('原生 SVG/GIF 模式暂不支持 Markup 标注，请切换回普通图片模式');
+  if (format === 'gif') {
+    for (const [key, fallback] of [['gifFrameCount', 20], ['gifFrameDurationMs', 200]]) {
+      const value = request[key] === undefined ? fallback : request[key];
+      if (!Number.isSafeInteger(value) || value < 1) {
+        throw new Error(`${key === 'gifFrameCount' ? 'GIF 帧数' : 'GIF 每帧时长'}必须为正整数`);
+      }
+      request[key] = value;
+    }
+  } else {
+    delete request.gifFrameCount;
+    delete request.gifFrameDurationMs;
+  }
   return format;
 }
 

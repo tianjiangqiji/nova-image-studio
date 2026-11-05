@@ -36,6 +36,11 @@ async function waitFor(predicate) {
 test('native media preserves provider routing, file bytes and the text-only GIF contract', async t => {
   const requests = [];
   const upstream = http.createServer(async (req, res) => {
+    if (req.url === '/native.gif') {
+      res.writeHead(200, { 'Content-Type': 'image/gif' });
+      res.end(Buffer.from(GIF, 'base64'));
+      return;
+    }
     try {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
@@ -50,7 +55,11 @@ test('native media preserves provider routing, file bytes and the text-only GIF 
         res.end(JSON.stringify({ error: { type: 'invalid_request_error', code: 'bad_request', message: SVG } }));
       } else {
         res.writeHead(200, { 'Content-Type': 'application/json' });
+        if (body.prompt.startsWith('native-gif-url')) {
+        res.end(JSON.stringify({ data: [{ url: `http://127.0.0.1:${upstream.address().port}/native.gif` }] }));
+      } else {
         res.end(JSON.stringify({ data: [{ b64_json: body.prompt.startsWith('native-gif') ? `data:image/png;base64,${GIF}` : PNG }] }));
+      }
       }
     } catch (error) {
       res.writeHead(500);
@@ -66,7 +75,7 @@ test('native media preserves provider routing, file bytes and the text-only GIF 
     cwd: path.resolve(__dirname, '..'),
     env: { ...process.env, NODE_ENV: 'production', HOSTNAME: '127.0.0.1', PORT: String(backendPort),
       NOVA_TASK_DB: path.join(temp, 'tasks.sqlite'), NOVA_IMAGE_DIR: path.join(temp, 'images'),
-      NOVA_IMAGE_STREAM: 'false', NOVA_RATE_LIMIT_MAX_REQUESTS_PER_IP: '10000', NOVA_RATE_LIMIT_MAX_REQUESTS_PER_API_KEY: '10000' },
+      NOVA_IMAGE_STREAM: 'true', NOVA_RATE_LIMIT_MAX_REQUESTS_PER_IP: '10000', NOVA_RATE_LIMIT_MAX_REQUESTS_PER_API_KEY: '10000' },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
@@ -113,8 +122,12 @@ test('native media preserves provider routing, file bytes and the text-only GIF 
         assert.equal(result.url, format === 'svg' ? '/v1/chat/completions' : '/v1/images/generations');
         assert.equal(result.body.model, defaults.model);
         if (format === 'gif') {
-          assert.equal(result.body.response_format, 'b64_json');
-          assert.equal(result.body.output_format, undefined);
+          assert.equal(result.body.response_format, 'url');
+          assert.equal(result.body.output_format, 'gif');
+          assert.equal(result.body.stream, false);
+          assert.equal(result.body.partial_images, undefined);
+          assert.equal(result.body.frame_count, 20);
+          assert.equal(result.body.frame_duration_ms, 200);
           assert.equal(result.body.image, undefined);
         }
         if (mode === 'image-to-image') assert.equal(result.body.messages[0].content[1].image_url.url, `data:image/png;base64,${PNG}`);
@@ -125,6 +138,17 @@ test('native media preserves provider routing, file bytes and the text-only GIF 
       });
     }
   }
+  await t.test('forwards custom GIF timing and preserves a URL response', async () => {
+    const result = await completed({ model: 'gpt-image-2.6', prompt: 'native-gif-url', gptImageOutputFormat: 'gif', gifFrameCount: 24, gifFrameDurationMs: 80 });
+    assert.equal(result.body.model, 'gpt-image-2.6');
+    assert.equal(result.body.frame_count, 24);
+    assert.equal(result.body.frame_duration_ms, 80);
+    assert.equal(result.body.stream, false);
+    assert.equal(result.body.partial_images, undefined);
+    const download = await fetch(base + result.task.result.images[0].slice(4));
+    assert.equal(download.headers.get('content-type'), 'image/gif');
+    assert.deepEqual(Buffer.from(await download.arrayBuffer()), Buffer.from(GIF, 'base64'));
+  });
   await t.test('reports static PNG honestly and preserves custom Pro dimensions', async () => {
     const result = await completed({ model: 'gpt-image-2.6-sunburst-pro', gptImageOutputFormat: 'gif', customSize: '3264x2448' });
     assert.equal(result.body.size, '3264x2448');
@@ -139,6 +163,10 @@ test('native media preserves provider routing, file bytes and the text-only GIF 
     { mode: 'image-to-image', images: [] },
     { protocol: 'google' },
     { model: 'gpt-image-2' },
+    { gifFrameCount: 0 },
+    { gifFrameDurationMs: -1 },
+    { gifFrameCount: 1.5 },
+    { gifFrameDurationMs: null },
   ]) {
     await t.test(`rejects unsupported native GIF request ${JSON.stringify(overrides)}`, async () => {
       const count = requests.length;

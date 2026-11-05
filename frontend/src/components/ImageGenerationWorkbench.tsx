@@ -903,13 +903,7 @@ export function ImageGenerationWorkbench({
               />
             </div>
 
-            <div className="ml-auto flex w-full justify-end gap-2 px-3 pb-2 sm:w-auto sm:px-4">
-              {nativeOutputSupported && (
-                <label className="mr-auto flex items-center gap-2 text-xs">
-                  <Switch checked={outputFormat === 'svg'} onCheckedChange={checked => setOutputFormat(checked ? 'svg' : 'png')} aria-label="SVG 矢量图" />
-                  SVG 矢量图
-                </label>
-              )}
+            <div role="group" aria-label="生图工具栏" className="flex w-full flex-wrap items-center justify-end gap-2 px-3 pb-2 sm:px-4">
               <Button variant="ghost" size="icon" onClick={() => setQuickPromptOpen(true)} title="快速提示词">
                 <Zap className="w-4 h-4" />
               </Button>
@@ -919,6 +913,12 @@ export function ImageGenerationWorkbench({
               <Button variant="ghost" size="icon" onClick={() => void handleSavePromptAsset()} disabled={!prompt.trim() && !hasLayout} title="存为提示词素材">
                 <Save className="w-4 h-4" />
               </Button>
+              {nativeOutputSupported && (
+                <label className="flex h-6 cursor-pointer items-center gap-1.5 whitespace-nowrap px-1 text-[11px] text-foreground">
+                  <Switch size="sm" variant="neutral" checked={outputFormat === 'svg'} onCheckedChange={checked => setOutputFormat(checked ? 'svg' : 'png')} aria-label="SVG 矢量图" />
+                  SVG 矢量图
+                </label>
+              )}
               <div
                 className={cn(
                   'flex items-center rounded-md',

@@ -48,6 +48,8 @@ export interface CreateNovaTaskInput {
   gptImageStyle?: GptImageStyle;
   gptImageBackground?: GptImageBackground;
   gptImageOutputFormat?: GptImageOutputFormat;
+  gifFrameCount?: number;
+  gifFrameDurationMs?: number;
   gptImageMarkup?: ImageReference;
   parallelCount: number;
   images: ImageReference[];

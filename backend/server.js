@@ -1109,6 +1109,8 @@ function createTask(body, req) {
     gptImageQuality: body.gptImageQuality,
     gptImageBackground: body.gptImageBackground,
     gptImageOutputFormat: body.gptImageOutputFormat,
+    gifFrameCount: body.gifFrameCount,
+    gifFrameDurationMs: body.gifFrameDurationMs,
     parallelCount: body.parallelCount,
     images: body.images.map(img => ({ mimeType: img.mimeType })),
   };
@@ -1265,7 +1267,7 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
   const prompt = buildImageOutputPrompt(request);
   const antigravityGemini = isAntigravityGeminiImageModel(request.model);
   const advancedParams = antigravityGemini ? null : getGptImageRequestAdvancedParams(request);
-  const stream = antigravityGemini ? false : Boolean(options.stream);
+  const stream = !antigravityGemini && request.gptImageOutputFormat !== 'gif' && Boolean(options.stream);
   const partialImages = antigravityGemini
     ? 0
     : Math.min(3, Math.max(0, Number(options.partialImages) || 0));
@@ -1373,6 +1375,13 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
       ...(antigravityQuality ? { quality: antigravityQuality } : {}),
       ...(antigravityImageSize ? { imageSize: antigravityImageSize, image_size: antigravityImageSize } : {}),
       response_format: 'b64_json',
+    } : {}),
+    ...(request.gptImageOutputFormat === 'gif' ? {
+      output_format: 'gif',
+      frame_count: request.gifFrameCount ?? 20,
+      frame_duration_ms: request.gifFrameDurationMs ?? 200,
+      response_format: 'url',
+      stream: false,
     } : {}),
     ...(request.images.length > 0 ? { image: request.images.map(img => `data:${img.mimeType};base64,${img.data}`) } : {}),
   };

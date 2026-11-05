@@ -12,6 +12,8 @@ import {
 import { Button, buttonVariants } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
+import { Input } from '@/components/ui/input';
+import { normalizeNativeGifParams } from '@/lib/native-gif';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { AttachmentChips } from '@/components/AttachmentChips';
 import { GptImageAdvancedParamsControl } from '@/components/GptImageAdvancedParamsControl';
@@ -30,6 +32,10 @@ export interface GifUploadedRef extends RefImageData {
 
 export interface GifParametersPanelProps {
   nativeGif: boolean;
+  gifFrameCount: number;
+  onGifFrameCountChange: (value: number) => void;
+  gifFrameDurationMs: number;
+  onGifFrameDurationMsChange: (value: number) => void;
   onNativeGifChange: (value: boolean) => void;
   prompt: string;
   onPromptChange: (value: string) => void;
@@ -152,13 +158,6 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
           </div>
         )}
 
-        {supportsNativeImageOutput(props.model) && (
-          <label className="flex items-center gap-2 px-4 pb-3 text-sm">
-            <Switch checked={props.nativeGif} onCheckedChange={props.onNativeGifChange} disabled={props.generating} aria-label="原生 GIF 模式" />
-            原生 GIF 模式
-          </label>
-        )}
-
         <Textarea
           value={props.prompt}
           onChange={event => props.onPromptChange(event.target.value)}
@@ -175,7 +174,7 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
       </div>
 
       <div className="flex-none border-t border-border/50 px-4 py-3">
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div role="group" aria-label="动图工具栏" className="flex flex-wrap items-center gap-1.5">
           <Popover open={props.modelPopoverOpen} onOpenChange={props.onModelPopoverOpenChange}>
             <PopoverTrigger
               className={cn(buttonVariants({ variant: 'outline', size: 'xs' }), 'gap-1')}
@@ -213,6 +212,35 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
               variant="outline"
               size="xs"
             />
+          )}
+
+          {supportsNativeImageOutput(props.model) && (
+            <label className="flex h-6 cursor-pointer items-center gap-1.5 whitespace-nowrap px-1 text-[11px] text-foreground">
+              <Switch size="sm" variant="neutral" checked={props.nativeGif} onCheckedChange={props.onNativeGifChange} disabled={props.generating} aria-label="原生 GIF 模式" />
+              原生 GIF
+            </label>
+          )}
+
+          {props.nativeGif && (
+            <div role="group" aria-label="原生 GIF 参数" className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <label className="flex items-center gap-1.5 whitespace-nowrap text-[11px] text-muted-foreground">
+                帧数
+                <Input type="number" min={1} step={1} aria-label="GIF 帧数"
+                  value={Number.isFinite(props.gifFrameCount) ? props.gifFrameCount : ''}
+                  onChange={event => props.onGifFrameCountChange(event.target.valueAsNumber)}
+                  onBlur={() => props.onGifFrameCountChange(normalizeNativeGifParams(props.gifFrameCount, props.gifFrameDurationMs).gifFrameCount)}
+                  disabled={props.generating} className="h-6 w-16 rounded-md px-1.5 py-0 text-xs text-foreground md:text-xs" />
+              </label>
+              <label className="flex items-center gap-1.5 whitespace-nowrap text-[11px] text-muted-foreground">
+                每帧时长
+                <Input type="number" min={1} step={1} aria-label="GIF 每帧时长（毫秒）"
+                  value={Number.isFinite(props.gifFrameDurationMs) ? props.gifFrameDurationMs : ''}
+                  onChange={event => props.onGifFrameDurationMsChange(event.target.valueAsNumber)}
+                  onBlur={() => props.onGifFrameDurationMsChange(normalizeNativeGifParams(props.gifFrameCount, props.gifFrameDurationMs).gifFrameDurationMs)}
+                  disabled={props.generating} className="h-6 w-20 rounded-md px-1.5 py-0 text-xs text-foreground md:text-xs" />
+                毫秒
+              </label>
+            </div>
           )}
 
           <button

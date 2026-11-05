@@ -44,7 +44,7 @@ describe('native GIF workflow', () => {
     const { result } = renderHook(useGifWorkflow);
     await act(async () => result.current.submitGrid(input));
     expect(loadGifTemplate).not.toHaveBeenCalled();
-    expect(createNovaTask).toHaveBeenCalledWith(expect.objectContaining({ mode: 'text-to-image', gptImageOutputFormat: 'gif', outputSize: 'auto', images: [], baseUrl: 'https://custom.example.test', protocol: 'openai', model: input.model }));
+    expect(createNovaTask).toHaveBeenCalledWith(expect.objectContaining({ mode: 'text-to-image', gptImageOutputFormat: 'gif', gifFrameCount: 20, gifFrameDurationMs: 200, outputSize: 'auto', images: [], baseUrl: 'https://custom.example.test', protocol: 'openai', model: input.model }));
     await complete();
     await waitFor(() => expect(result.current.job?.resultFrameCount).toBe(2));
     expect(result.current.job?.status).toBe('done');
@@ -52,6 +52,18 @@ describe('native GIF workflow', () => {
     expect(result.current.job?.warning).toBeUndefined();
     await act(async () => result.current.encodeGif(input));
     expect(encodeGifFromGrid).not.toHaveBeenCalled();
+  });
+
+  it('preserves custom timing in requests, persisted jobs and retry inputs', async () => {
+    const custom = { ...input, gifFrameCount: 24, gifFrameDurationMs: 80 };
+    const first = renderHook(useGifWorkflow);
+    await act(async () => first.result.current.submitGrid(custom));
+    await complete();
+    first.unmount();
+    const restored = renderHook(useGifWorkflow);
+    await waitFor(() => expect(restored.result.current.job).toMatchObject({ gifFrameCount: 24, gifFrameDurationMs: 80 }));
+    await act(async () => restored.result.current.submitGrid({ ...input, ...restored.result.current.job! }));
+    expect(createNovaTask).toHaveBeenLastCalledWith(expect.objectContaining({ gifFrameCount: 24, gifFrameDurationMs: 80, gptImageOutputFormat: 'gif' }));
   });
 
   it('ignores retained grid references and only sends text in native mode', async () => {
@@ -64,8 +76,10 @@ describe('native GIF workflow', () => {
 
   it.each([{ model: 'gpt-image-2.6-flare', nativeGif: false }, { model: 'gpt-image-2-pro', nativeGif: true }])('keeps manual grid generation for %j', async overrides => {
     const { result } = renderHook(useGifWorkflow);
-    await act(async () => result.current.submitGrid({ ...input, ...overrides }));
+    await act(async () => result.current.submitGrid({ ...input, gifFrameCount: 24, gifFrameDurationMs: 80, ...overrides }));
     expect(loadGifTemplate).toHaveBeenCalledOnce();
+    expect(vi.mocked(createNovaTask).mock.calls.at(-1)![0]).not.toHaveProperty('gifFrameCount');
+    expect(vi.mocked(createNovaTask).mock.calls.at(-1)![0]).not.toHaveProperty('gifFrameDurationMs');
     expect(createNovaTask).toHaveBeenCalledWith(expect.objectContaining({ gptImageOutputFormat: 'png', customSize: '3264x2448', images: [{ data: 'template', mimeType: 'image/png' }] }));
     await complete();
     await waitFor(() => expect(result.current.job?.status).toBe('review_grid'));
