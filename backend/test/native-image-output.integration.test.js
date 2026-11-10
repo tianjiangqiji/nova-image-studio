@@ -42,6 +42,15 @@ test('native media uses Images API and preserves provider routing and original b
       res.end(Buffer.from(GIF, 'base64'));
       return;
     }
+    if (req.url.startsWith('/missing.gif')) {
+      res.writeHead(403, { 'x-request-id': 'req-download_403' });
+      res.end('secret=download-body-secret');
+      return;
+    }
+    if (req.url === '/reset.gif') {
+      req.socket.destroy();
+      return;
+    }
     try {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
@@ -50,6 +59,30 @@ test('native media uses Images API and preserves provider routing and original b
       if (req.url !== '/v1/images/generations') {
         res.writeHead(404);
         res.end('Unexpected endpoint');
+        return;
+      }
+      if (body.prompt.startsWith('native-gif-disabled')) {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'x-request-id': 'req-gif-disabled_123' });
+        res.end(JSON.stringify({ error: { message: 'GIF output is not enabled for this request.' } }));
+        return;
+      }
+      if (body.prompt === 'native-svg-network') {
+        req.socket.destroy();
+        return;
+      }
+      if (body.prompt === 'native-svg-secrets') {
+        res.writeHead(400, { 'Content-Type': 'application/json', 'x-request-id': 'bad/request?token=header-secret' });
+        res.end(JSON.stringify({ error: { message: 'Denied: test-only-key https://user:credential-secret@example.test/image?token=url-secret Authorization: Bearer bearer-secret api_key=field-secret token=token-secret "secret":"json-secret" sk-other-secret' } }));
+        return;
+      }
+      if (body.prompt === 'native-svg-secret-request-id') {
+        res.writeHead(503, { 'Content-Type': 'application/json', 'request-id': 'test-only-key' });
+        res.end(JSON.stringify({ error: { message: 'upstream timeout' } }));
+        return;
+      }
+      if (body.prompt === 'native-svg-raw-error') {
+        res.writeHead(502, { 'Content-Type': 'text/plain', 'request-id': 'req-raw_502' });
+        res.end('GIF output is not enabled for this request. api_key=raw-body-secret');
         return;
       }
       if (body.prompt.startsWith('native-svg-error')) {
@@ -63,7 +96,10 @@ test('native media uses Images API and preserves provider routing and original b
         return;
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      if (body.prompt.startsWith('native-gif-url')) {
+      if (body.prompt.startsWith('native-gif-download-http') || body.prompt.startsWith('native-gif-download-reset')) {
+        const endpoint = body.prompt.startsWith('native-gif-download-http') ? '/missing.gif?token=download-url-secret' : '/reset.gif';
+        res.end(JSON.stringify({ data: [{ url: `http://127.0.0.1:${upstream.address().port}${endpoint}` }] }));
+      } else if (body.prompt.startsWith('native-gif-url')) {
         res.end(JSON.stringify({ data: [{ url: `http://127.0.0.1:${upstream.address().port}/native.gif` }] }));
       } else {
         const bytes = body.prompt.startsWith('native-svg') ? Buffer.from(SVG).toString('base64')
@@ -167,6 +203,63 @@ test('native media uses Images API and preserves provider routing and original b
     assert.equal(requests.length, count + 1);
     assert.match(result.task.error, /400/);
     assert.equal(result.task.result, undefined);
+  });
+  await t.test('GIF permission failure preserves upstream reason, status, and request-id without retry', async () => {
+    const count = requests.length;
+    const result = await finished({ gptImageOutputFormat: 'gif', prompt: 'native-gif-disabled' }, 'failed');
+    assert.equal(requests.length, count + 1);
+    assert.match(result.task.error, /生成请求失败/);
+    assert.match(result.task.error, /HTTP 400/);
+    assert.match(result.task.error, /request-id: req-gif-disabled_123/);
+    assert.match(result.task.error, /GIF output is not enabled for this request\./);
+    assert.match(result.task.error, /联系服务商开通/);
+  });
+  for (const [prompt, stage] of [
+    ['native-svg-network', '生成请求'],
+    ['native-gif-download-reset', '结果下载'],
+  ]) {
+    await t.test(`${prompt} reports the failed phase and network cause without retry`, async () => {
+      const count = requests.length;
+      const result = await finished({ gptImageOutputFormat: prompt.includes('svg') ? 'svg' : 'gif', prompt }, 'failed');
+      assert.equal(requests.length, count + 1);
+      assert.match(result.task.error, new RegExp(`${stage}失败`));
+      assert.match(result.task.error, /UND_ERR_SOCKET|ECONNRESET/);
+      assert.doesNotMatch(result.task.error, /http:\/\/|127\.0\.0\.1/);
+      assert.equal(result.task.result, undefined);
+    });
+  }
+  await t.test('download HTTP failure keeps safe response metadata and never exposes the signed URL or body', async () => {
+    const count = requests.length;
+    const result = await finished({ gptImageOutputFormat: 'gif', prompt: 'native-gif-download-http' }, 'failed');
+    assert.equal(requests.length, count + 1);
+    assert.match(result.task.error, /结果下载失败/);
+    assert.match(result.task.error, /HTTP 403/);
+    assert.match(result.task.error, /request-id: req-download_403/);
+    assert.doesNotMatch(result.task.error, /download-(url|body)-secret|http:\/\/|127\.0\.0\.1/);
+  });
+  await t.test('upstream messages redact credentials and reject request-id values outside the whitelist', async () => {
+    const result = await finished({ gptImageOutputFormat: 'svg', prompt: 'native-svg-secrets' }, 'failed');
+    assert.match(result.task.error, /生成请求失败/);
+    assert.match(result.task.error, /HTTP 400/);
+    assert.match(result.task.error, /Denied/);
+    assert.match(result.task.error, /已脱敏/);
+    assert.doesNotMatch(JSON.stringify(result.task), /test-only-key|credential-secret|url-secret|bearer-secret|field-secret|token-secret|json-secret|sk-other-secret|header-secret|request-id:/);
+    assert.doesNotMatch(output, /test-only-key|credential-secret|url-secret|bearer-secret|field-secret|token-secret|json-secret|sk-other-secret|header-secret/);
+  });
+  await t.test('upstream timeout reason keeps response metadata without exposing a secret request-id', async () => {
+    const result = await finished({ gptImageOutputFormat: 'svg', prompt: 'native-svg-secret-request-id' }, 'failed');
+    assert.match(result.task.error, /生成请求失败/);
+    assert.match(result.task.error, /HTTP 503/);
+    assert.match(result.task.error, /upstream timeout/);
+    assert.doesNotMatch(result.task.error, /test-only-key|request-id:/);
+  });
+  await t.test('plain text upstream errors retain the original reason after credential redaction', async () => {
+    const result = await finished({ gptImageOutputFormat: 'svg', prompt: 'native-svg-raw-error' }, 'failed');
+    assert.match(result.task.error, /HTTP 502/);
+    assert.match(result.task.error, /request-id: req-raw_502/);
+    assert.match(result.task.error, /GIF output is not enabled for this request\./);
+    assert.match(result.task.error, /已脱敏/);
+    assert.doesNotMatch(result.task.error, /raw-body-secret/);
   });
   await t.test('forwards bounded GIF timing, rounds to 10ms, and preserves a URL response', async () => {
     const result = await finished({ model: 'gpt-image-2.6', prompt: 'native-gif-url', gptImageOutputFormat: 'gif', gifFrameCount: 16, gifFrameDurationMs: 85 });

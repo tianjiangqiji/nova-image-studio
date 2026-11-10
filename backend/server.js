@@ -769,11 +769,18 @@ function saveImageToDisk(taskId, itemIndex, subIndex, imageBuffer, mimeType) {
 }
 
 async function downloadUrlToDisk(taskId, itemIndex, subIndex, imageUrl) {
-  const response = await fetchWithTimeout(imageUrl, {});
-  if (!response.ok) throw new Error(`远程图片下载失败: ${response.status}`);
-  const contentType = response.headers.get('content-type') || 'image/png';
-  const buffer = Buffer.from(await response.arrayBuffer());
-  return saveImageToDisk(taskId, itemIndex, subIndex, buffer, contentType);
+  let response;
+  let stage = '结果下载';
+  try {
+    response = await fetchWithTimeout(imageUrl, {});
+    if (!response.ok) throw new Error('远程图片下载失败');
+    const contentType = response.headers.get('content-type') || 'image/png';
+    const buffer = Buffer.from(await response.arrayBuffer());
+    stage = '结果保存';
+    return saveImageToDisk(taskId, itemIndex, subIndex, buffer, contentType);
+  } catch (error) {
+    throw withImageErrorContext(error, stage, response);
+  }
 }
 
 function getTaskImageFiles(taskId) {
@@ -1046,6 +1053,47 @@ function normalizeError(error) {
   }
   // 截断非预定义错误消息，避免泄露内部信息（文件路径、堆栈等）
   return message.length > 200 ? message.slice(0, 200) + '…' : message;
+}
+
+function withImageErrorContext(error, stage, response) {
+  const contextual = error instanceof Error ? error : new Error(String(error));
+  contextual.imageStage = stage;
+  if (response) {
+    contextual.upstreamStatus = response.status;
+    const requestId = response.headers.get('x-request-id') || response.headers.get('request-id');
+    if (requestId && /^[A-Za-z0-9_.:-]{1,128}$/.test(requestId)) {
+      contextual.upstreamRequestId = requestId;
+    }
+  }
+  return contextual;
+}
+
+function normalizeImageTaskError(error, stage, apiKey) {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const message = rawMessage.split(apiKey).join('[已脱敏]')
+    .replace(/https?:\/\/[^\s<>"']+/gi, '[网址已隐藏]')
+    .replace(/\bBearer\s+[^\s,"';}]+/gi, 'Bearer [已脱敏]')
+    .replace(/(\b(?:authorization|x-api-key|api[-_]?key|access[-_]?token|refresh[-_]?token|token|password|secret)\b["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, '$1[已脱敏]')
+    .replace(/\bsk-[A-Za-z0-9_-]+/g, '[已脱敏]');
+  const code = error?.cause?.code || error?.code;
+  const networkCodes = new Set([
+    'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EPIPE',
+    'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'CERT_HAS_EXPIRED',
+    'ERR_TLS_CERT_ALTNAME_INVALID', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  ]);
+  const details = [];
+  if (Number.isInteger(error?.upstreamStatus) && error.upstreamStatus >= 100 && error.upstreamStatus <= 599) {
+    details.push(`HTTP ${error.upstreamStatus}`);
+  }
+  if (networkCodes.has(code)) details.push(code);
+  if (error?.upstreamRequestId && !error.upstreamRequestId.includes(apiKey) && !/\bsk-/i.test(error.upstreamRequestId)) {
+    details.push(`request-id: ${error.upstreamRequestId}`);
+  }
+  const reason = error?.upstreamStatus ? message.slice(0, 200) : normalizeError(new Error(message));
+  const gifHint = /\bGIF output is not enabled for this request\.?\s*$/i.test(message)
+    ? ' 当前服务未为此请求启用 GIF 输出，请联系服务商开通。' : '';
+  return `${error?.imageStage || stage}失败${details.length ? `（${details.join('；')}）` : ''}：${reason}${gifHint}`;
 }
 
 function validateEnumValue(value, validValues, fieldName) {
@@ -1608,7 +1656,11 @@ async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
     `${baseUrl}${endpoint}`,
     createGptImageRequestInit(apiKey, request, resolvedSize, options)
   );
-  return parseGptImageResponse(response);
+  try {
+    return await parseGptImageResponse(response);
+  } catch (error) {
+    throw withImageErrorContext(error, '生成请求', response);
+  }
 }
 
 function getGrokResolution(outputSize) {
@@ -1949,6 +2001,7 @@ function drainQueue() {
 }
 
 async function generateSingleImage(apiKey, request, taskId, index) {
+  let stage = '生成请求';
   try {
     const image = await generateNovaImage(apiKey, request);
     const expanded = image.startsWith('MULTI_URL:') ? image.substring(10).split('|||').map(url => `URL:${url}`) : [image];
@@ -1958,9 +2011,11 @@ async function generateSingleImage(apiKey, request, taskId, index) {
       const img = expanded[subIdx];
       let result;
       if (img.startsWith('URL:')) {
+        stage = '结果下载';
         const remoteUrl = img.substring(4);
         result = await downloadUrlToDisk(taskId, index, subIdx, remoteUrl);
       } else {
+        stage = '结果保存';
         const { bytes, mimeType } = decodeImagePayload(img);
         result = saveImageToDisk(taskId, index, subIdx, bytes, mimeType);
       }
@@ -1974,7 +2029,7 @@ async function generateSingleImage(apiKey, request, taskId, index) {
       .run(JSON.stringify(diskRefs), new Date().toISOString(), taskId, index);
     return { success: true, images: diskRefs, warnings };
   } catch (error) {
-    const message = normalizeError(error);
+    const message = normalizeImageTaskError(error, stage, apiKey);
     db.prepare("UPDATE task_items SET status = 'failed', error = ?, completed_at = ? WHERE task_id = ? AND item_index = ?")
       .run(message, new Date().toISOString(), taskId, index);
     return { success: false, error: message };
