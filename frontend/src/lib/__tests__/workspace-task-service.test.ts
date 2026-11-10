@@ -220,6 +220,20 @@ describe('submitTextToImage', () => {
 });
 
 describe('submitImageToImage markup', () => {
+  it('在创建任务或清理草稿前拒绝 SVG 图生图', async () => {
+    const { actions } = createActions(makeJob());
+    const onError = vi.fn();
+    await submitImageToImage({
+      prompt: '矢量图标', model: 'gpt-image-2', outputSize: '1K', aspectRatio: '1:1', temperature: 1,
+      parallelCount: 1, gptImageQuality: 'high', gptImageStyle: 'auto', gptImageBackground: 'auto',
+      gptImageOutputFormat: 'svg',
+      files: [{ id: 'first', name: 'first.png', mimeType: 'image/png', dataUrl: 'data:image/png;base64,AQ==' }],
+    }, actions, onError);
+    expect(onError).toHaveBeenCalledWith(expect.stringContaining('原生 SVG 仅支持文生图'));
+    expect(mockedCreateNovaTask).not.toHaveBeenCalled();
+    expect(actions.addJob).not.toHaveBeenCalled();
+  });
+
   it.each([true, false])('binds markup to the first reference only (matching=%s)', async matching => {
     const registry = loadRegistry();
     saveRegistry({ ...registry, providers: undefined,

@@ -43,6 +43,7 @@ Nova Studio 是一个面向个人/团队的 AI 视频/图像生成工作台。�
 | 排查插件装不上 / 任务失败 | [docs/plugins/errors.md](docs/plugins/errors.md) |
 | 抄常见写法 | [docs/plugins/cookbook.md](docs/plugins/cookbook.md) |
 | 搞清楚任务从提交到出片经过什么 | [docs/plugins/lifecycle.md](docs/plugins/lifecycle.md) |
+| 配置 GPT Image 2.6 原生 GIF / SVG 输出 | [原生输出说明](docs/2026-11-11-gpt-image-2.6-native-output.md) |
 
 ## 💎 赞助商
 
@@ -115,7 +116,7 @@ Nova Studio 是一个面向个人/团队的 AI 视频/图像生成工作台。�
 | 🤖 Agent 智能体 | `AgentChatWorkspace` | 多轮对话式生成：聊天 → 方案 → 出图，支持 vision 描述、联网搜索、reasoning |
 | ✂️ UI设计模式 | `SliceWorkspace` | UI 图 → 切图资产 → 网页复刻（仅宽屏可用，详见下节） |
 | 🔍 反推提示词 | `ReversePromptForm` | 上传图片流式反推提示词（支持所有已配置的文字模型） |
-| 🎬 动图生成 | `GifGenerationWorkspace` | 多帧生图 + 网格拼合，浏览器端编码 GIF（`gifenc`） |
+| 🎬 动图生成 | `GifGenerationWorkspace` | GPT Image 2.6 原生 GIF，或多帧生图 + 网格拼合、浏览器端编码 GIF（`gifenc`） |
 | 🎥 视频工作台 | `PluginWorkbench` | 由**视频插件**提供能力，本体不内置任何上游协议（详见下节） |
 
 ### 视频工作台（插件化）
@@ -176,6 +177,7 @@ Nova Studio 采用**用户自定义模型**架构：
 - **模型级配置**：每个图片模型和文本模型都独立保存协议、显示名称、模型 ID、API Key 与 Base URL
 - **图像模型**：用户自由添加、编辑、删除，支持设置协议、显示名称、模型 ID、最大参考图数量、最大分辨率
 - **Image 2 额外参数**：仅 OpenAI 图片模型显示，透明背景、质量、风格控件默认开启，用户可手动关闭
+- **GPT Image 2.6 原生输出**：支持 `gpt-image-2.6-flare`、`gpt-image-2.6-sunburst` 及兼容的供应商模型 ID；文字生成可选择原生 SVG，动图工作台可直接获取原生 GIF。两者均走 Images generations 接口并保留原始文件，详见[原生输出说明](docs/2026-11-11-gpt-image-2.6-native-output.md)
 - **文字模型**：支持自定义扩展，兼容 Gemini 和 OpenAI Response
 - **默认模型**：可为文本生图、图生图、反推提示词、Agent、AI 拆图、网页复刻、切图图片编辑等任务分别设置默认模型
 - **多协议文本模型**：OpenAI Responses / OpenAI Chat Completions / Anthropic Messages / Google Gemini 四种协议，均支持多轮工具调用（UI设计模式的网页复刻 agent 依赖此能力），统一经 `/api/nova/proxy/text` 转发

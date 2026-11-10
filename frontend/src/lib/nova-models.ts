@@ -25,6 +25,7 @@ export type BuiltinImagePresetId =
   | 'antigravity-gemini-image'
   | 'gpt-image-2'
   | 'gpt-image-2.6'
+  | 'gpt-image-2.6-sunburst'
   | 'gpt-image-2.6-pro'
   | 'grok-imagine-image'
   | 'grok-imagine-image-quality'
@@ -182,6 +183,11 @@ export const BUILTIN_IMAGE_PRESETS: Record<BuiltinImagePresetId, BuiltinImagePre
   'gpt-image-2.6-pro': {
     id: 'gpt-image-2.6-pro', protocol: 'openai', name: 'GPT Image 2.6 Pro',
     modelId: 'gpt-image-2.6-sunburst-pro', baseUrl: '',
+    maxRefImages: 16, maxOutputSize: '4K', supportsAdvancedParams: true,
+  },
+  'gpt-image-2.6-sunburst': {
+    id: 'gpt-image-2.6-sunburst', protocol: 'openai', name: 'GPT Image 2.6 Sunburst',
+    modelId: 'gpt-image-2.6-sunburst', baseUrl: 'https://api.openai.com',
     maxRefImages: 16, maxOutputSize: '4K', supportsAdvancedParams: true,
   },
   'grok-imagine-image': {

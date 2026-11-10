@@ -392,6 +392,11 @@ export async function submitImageToImage(
   actions: SubmitActions,
   onError: (message: string) => void
 ): Promise<void> {
+  if (input.gptImageOutputFormat === 'svg') {
+    onError('原生 SVG 仅支持文生图，请移除参考图或切换为普通图片输出');
+    return;
+  }
+
   const provider = resolveImageTaskProvider(input.model);
   const apiKey = provider.apiKey;
 

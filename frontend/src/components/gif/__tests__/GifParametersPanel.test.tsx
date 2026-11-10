@@ -16,7 +16,7 @@ const callbacks = {
 };
 function Harness({ generating = false, model = 'gpt-image-2.6-flare' }: { generating?: boolean; model?: GifParametersPanelProps['model'] }) {
   const [nativeGif, setNativeGif] = useState(model === 'gpt-image-2.6-flare');
-  const [gifFrameCount, setGifFrameCount] = useState(20);
+  const [gifFrameCount, setGifFrameCount] = useState(9);
   const [gifFrameDurationMs, setGifFrameDurationMs] = useState(200);
   return <GifParametersPanel {...callbacks}
     nativeGif={nativeGif} onNativeGifChange={setNativeGif}
@@ -33,16 +33,16 @@ describe('native GIF toolbar controls', () => {
   it('keeps timing controls in the toolbar, preserves edits across mode switches and restores grid upload', () => {
     const { container } = render(<Harness />);
     const toolbar = within(screen.getByRole('group', { name: '动图工具栏' }));
-    expect(toolbar.getByRole('spinbutton', { name: 'GIF 帧数' })).toHaveValue(20);
+    expect(toolbar.getByRole('spinbutton', { name: 'GIF 帧数' })).toHaveValue(9);
     expect(toolbar.getByRole('spinbutton', { name: 'GIF 每帧时长（毫秒）' })).toHaveValue(200);
     expect(container.querySelector('input[type=file]')).toBeNull();
-    fireEvent.change(toolbar.getByRole('spinbutton', { name: 'GIF 帧数' }), { target: { value: '24' } });
+    fireEvent.change(toolbar.getByRole('spinbutton', { name: 'GIF 帧数' }), { target: { value: '12' } });
     fireEvent.change(toolbar.getByRole('spinbutton', { name: 'GIF 每帧时长（毫秒）' }), { target: { value: '80' } });
     fireEvent.click(toolbar.getByRole('switch', { name: /原生 GIF 模式/ }));
     expect(screen.queryByRole('group', { name: '原生 GIF 参数' })).toBeNull();
     expect(container.querySelector('input[type=file]')).not.toBeNull();
     fireEvent.click(toolbar.getByRole('switch', { name: /原生 GIF 模式/ }));
-    expect(toolbar.getByRole('spinbutton', { name: 'GIF 帧数' })).toHaveValue(24);
+    expect(toolbar.getByRole('spinbutton', { name: 'GIF 帧数' })).toHaveValue(12);
     expect(toolbar.getByRole('spinbutton', { name: 'GIF 每帧时长（毫秒）' })).toHaveValue(80);
   });
 
@@ -58,16 +58,24 @@ describe('native GIF toolbar controls', () => {
     expect(screen.getByRole('spinbutton', { name: 'GIF 每帧时长（毫秒）' })).toBeDisabled();
   });
 
-  it('allows clearing numeric input and restores invalid timing to defaults on blur', () => {
+  it('retains invalid input, explains its range and disables submission instead of silently changing it', () => {
     render(<Harness />);
     const count = screen.getByRole('spinbutton', { name: 'GIF 帧数' });
     fireEvent.change(count, { target: { value: '' } });
     expect(count).toHaveValue(null);
     fireEvent.blur(count);
-    expect(count).toHaveValue(20);
+    expect(count).toHaveValue(null);
+    expect(screen.getByRole('alert')).toHaveTextContent('2–16');
+    expect(screen.getByRole('button', { name: '生成原生 GIF' })).toBeDisabled();
+    fireEvent.change(count, { target: { value: '9' } });
     const duration = screen.getByRole('spinbutton', { name: 'GIF 每帧时长（毫秒）' });
     fireEvent.change(duration, { target: { value: '-1' } });
     fireEvent.blur(duration);
-    expect(duration).toHaveValue(200);
+    expect(duration).toHaveValue(-1);
+    expect(screen.getByRole('alert')).toHaveTextContent('20–2000');
+    expect(screen.getByRole('button', { name: '生成原生 GIF' })).toBeDisabled();
+    fireEvent.change(duration, { target: { value: '25' } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('button', { name: '生成原生 GIF' })).toBeEnabled();
   });
 });

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createNovaTask, getNovaTask, ackNovaTask, resolveImageTaskProvider, type ImageReference } from '@/lib/ccode-task-client';
 import { novaTaskSocket } from '@/lib/ccode-task-socket';
 import { resolveImagePayloadToBlob } from '@/lib/image-actions';
-import { buildNativeGifPrompt, inspectNativeGif, normalizeNativeGifParams } from '@/lib/native-gif';
+import { buildNativeGifPrompt, DEFAULT_NATIVE_GIF_FRAME_COUNT, DEFAULT_NATIVE_GIF_FRAME_DURATION_MS, getNativeGifParamsError, inspectNativeGif, normalizeNativeGifParams } from '@/lib/native-gif';
 import { generateUUID } from '@/lib/uuid';
 import {
   downloadAndStoreImages,
@@ -331,14 +331,21 @@ export function useGifWorkflow(): UseGifWorkflowResult {
     }
     setIsApiKeyMissing(false);
 
+    const nativeGif = supportsNativeImageOutput(input.model) && input.nativeGif !== false;
+    const frameCount = input.gifFrameCount ?? DEFAULT_NATIVE_GIF_FRAME_COUNT;
+    const frameDurationMs = input.gifFrameDurationMs ?? DEFAULT_NATIVE_GIF_FRAME_DURATION_MS;
+    if (nativeGif) {
+      const paramsError = getNativeGifParamsError(frameCount, frameDurationMs);
+      if (paramsError) throw new Error(paramsError);
+    }
+    const nativeParams = nativeGif ? normalizeNativeGifParams(frameCount, frameDurationMs) : {};
+
     const previousJob = jobRef.current;
     clearSubscription();
     revokeResolvedUrls();
     setGridImageUrl(null);
     setGifBlob(null);
 
-    const nativeGif = supportsNativeImageOutput(input.model) && input.nativeGif !== false;
-    const nativeParams = nativeGif ? normalizeNativeGifParams(input.gifFrameCount, input.gifFrameDurationMs) : {};
     const template = nativeGif ? null : await loadGifTemplate();
     const refsForSubmit = nativeGif ? [] : input.refImages.slice(0, 6);
     const advancedParams = getGptImageAdvancedParamsForModel(input.model, {

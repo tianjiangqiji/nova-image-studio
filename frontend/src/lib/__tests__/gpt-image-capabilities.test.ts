@@ -45,7 +45,8 @@ describe('standard GPT Image capabilities', () => {
   it('provides 2.6 templates while preserving user provider settings', () => {
     expect(BUILTIN_IMAGE_PRESETS['gpt-image-2.6'].modelId).toBe('gpt-image-2.6-flare');
     expect(BUILTIN_IMAGE_PRESETS['gpt-image-2.6-pro'].modelId).toBe('gpt-image-2.6-sunburst-pro');
-    expect(inferImagePreset('openai-compatible', 'gpt-image-2.6-sunburst')).toBe('gpt-image-2.6');
+    expect(BUILTIN_IMAGE_PRESETS['gpt-image-2.6-sunburst'].modelId).toBe('gpt-image-2.6-sunburst');
+    expect(inferImagePreset('openai-compatible', 'gpt-image-2.6-sunburst')).toBe('gpt-image-2.6-sunburst');
     expect(inferImagePreset('openai-compatible', 'gpt-image-2.6-flare-pro-tokens')).toBe('gpt-image-2.6-pro');
     expect(loadRegistry().imageModels.find(model => model.id === 'custom-26')).toMatchObject({
       modelId: 'gpt-image-2.6-sunburst', baseUrl: 'https://openai.example.test', apiKey: 'test-key',

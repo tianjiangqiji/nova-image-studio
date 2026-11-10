@@ -194,6 +194,7 @@ export function ImageGenerationWorkbench({
   const autoLayoutLocked = outputSize === 'auto';
   const nativeOutputSupported = supportsNativeImageOutput(model);
   const activeOutputFormat = nativeOutputSupported ? outputFormat : 'png';
+  const svgReferencesUnsupported = activeOutputFormat === 'svg' && pendingFiles.length > 0;
   const markupSupported = supportsGptImageMarkup(model) && activeOutputFormat === 'png';
   const activeMarkup = markupSupported && gptImageMarkup?.referenceId === pendingFiles[0]?.id
     ? gptImageMarkup : undefined;
@@ -645,7 +646,7 @@ export function ImageGenerationWorkbench({
 
   const handleSubmit = () => {
     const finalPrompt = composePromptWithLayout(prompt, layoutSpec);
-    if (!finalPrompt.trim() || disabled || loading) return;
+    if (!finalPrompt.trim() || disabled || loading || svgReferencesUnsupported) return;
 
     const modelWithBilling = model;
     const carriedLayoutSpec = layoutSpec && !isLayoutSpecEmpty(layoutSpec) ? layoutSpec : undefined;
@@ -780,7 +781,7 @@ export function ImageGenerationWorkbench({
   };
 
   const hasLayout = !isLayoutSpecEmpty(layoutSpec);
-  const canSubmit = (prompt.trim().length > 0 || hasLayout) && !disabled && !loading;
+  const canSubmit = (prompt.trim().length > 0 || hasLayout) && !disabled && !loading && !svgReferencesUnsupported;
   const canClear = prompt.trim().length > 0 || pendingFiles.length > 0 || hasLayout;
 
   return (
@@ -916,7 +917,7 @@ export function ImageGenerationWorkbench({
               {nativeOutputSupported && (
                 <label className="flex h-6 cursor-pointer items-center gap-1.5 whitespace-nowrap px-1 text-[11px] text-foreground">
                   <Switch size="sm" variant="neutral" checked={outputFormat === 'svg'} onCheckedChange={checked => setOutputFormat(checked ? 'svg' : 'png')} aria-label="SVG 矢量图" />
-                  SVG 矢量图
+                  原生 SVG 矢量图
                 </label>
               )}
               <div
@@ -957,6 +958,11 @@ export function ImageGenerationWorkbench({
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <ArrowUp className="w-5 h-5" />}
               </Button>
             </div>
+            {svgReferencesUnsupported && (
+              <p role="alert" className="px-3 pb-3 text-xs text-destructive sm:px-4">
+                原生 SVG 仅支持文生图；请移除参考图，或关闭 SVG 后编辑图片。
+              </p>
+            )}
           </>
         )}
       </div>

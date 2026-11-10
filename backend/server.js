@@ -3,7 +3,7 @@ const net = require('net');
 const { createHash, randomUUID, timingSafeEqual } = require('crypto');
 const { spawn } = require('child_process');
 const { validateGptImageMarkup } = require('./gpt-image-markup');
-const { detectImageMime, decodeImagePayload, getImageExtension, isSvgText, validateImageOutput, buildImageOutputPrompt, extractSvgPayload, createNativeSvgRequest, extractChatImagePayload } = require('./image-output');
+const { detectImageMime, decodeImagePayload, getImageExtension, isSvgText, validateImageOutput, buildImageOutputPrompt, extractChatImagePayload } = require('./image-output');
 const fs = require('fs');
 const path = require('path');
 const next = process.env.NODE_ENV !== 'production' ? require('next') : null;
@@ -1267,8 +1267,9 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
   const prompt = buildImageOutputPrompt(request);
   const antigravityGemini = isAntigravityGeminiImageModel(request.model);
   const advancedParams = antigravityGemini ? null : getGptImageRequestAdvancedParams(request);
-  const stream = !antigravityGemini && request.gptImageOutputFormat !== 'gif' && Boolean(options.stream);
-  const partialImages = antigravityGemini
+  const nativeOutput = request.gptImageOutputFormat === 'svg' || request.gptImageOutputFormat === 'gif';
+  const stream = !antigravityGemini && !nativeOutput && Boolean(options.stream);
+  const partialImages = antigravityGemini || nativeOutput
     ? 0
     : Math.min(3, Math.max(0, Number(options.partialImages) || 0));
   const antigravityImageSize = antigravityGemini
@@ -1332,8 +1333,7 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
     if (advancedParams) {
       formData.append('quality', advancedParams.quality);
       formData.append('background', advancedParams.background);
-      if (!request.gptImageOutputFormat || request.gptImageOutputFormat === 'png') formData.append('output_format', 'png');
-      else formData.append('response_format', 'b64_json');
+      formData.append('output_format', 'png');
     }
     if (resolvedSize) formData.append('size', resolvedSize);
     request.images.forEach((img, index) => {
@@ -1367,8 +1367,7 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
     ...(advancedParams ? {
       quality: advancedParams.quality,
       background: advancedParams.background,
-      ...(!request.gptImageOutputFormat || request.gptImageOutputFormat === 'png'
-        ? { output_format: 'png' } : { response_format: 'b64_json' }),
+      output_format: request.gptImageOutputFormat || 'png',
     } : {}),
     ...(antigravityGemini ? {
       ...(resolvedSize ? { aspect_ratio: resolvedSize } : {}),
@@ -1376,12 +1375,10 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
       ...(antigravityImageSize ? { imageSize: antigravityImageSize, image_size: antigravityImageSize } : {}),
       response_format: 'b64_json',
     } : {}),
+    ...(nativeOutput ? { n: 1, stream: false } : {}),
     ...(request.gptImageOutputFormat === 'gif' ? {
-      output_format: 'gif',
-      frame_count: request.gifFrameCount ?? 20,
+      frame_count: request.gifFrameCount ?? 9,
       frame_duration_ms: request.gifFrameDurationMs ?? 200,
-      response_format: 'url',
-      stream: false,
     } : {}),
     ...(request.images.length > 0 ? { image: request.images.map(img => `data:${img.mimeType};base64,${img.data}`) } : {}),
   };
@@ -1563,16 +1560,12 @@ function extractImagePayloadFromEventStream(text) {
   throw new Error('响应中无图片数据');
 }
 
-async function parseGptImageResponse(response, outputFormat) {
+async function parseGptImageResponse(response) {
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
   if (response.ok && contentType.startsWith('image/') && !contentType.includes('svg')) {
     return `data:${contentType.split(';')[0]};base64,${Buffer.from(await response.arrayBuffer()).toString('base64')}`;
   }
   const responseText = await response.text();
-  if (outputFormat === 'svg' && (response.ok || response.status === 400)) {
-    const svg = extractSvgPayload(parseJsonSafely(responseText), response.status);
-    if (svg) return svg;
-  }
 
   if (!response.ok) {
     const errorText = getUpstreamErrorText(responseText, response.status);
@@ -1608,15 +1601,14 @@ function isImageStreamUnsupportedError(error) {
 
 async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
   const baseUrl = options.baseUrl || resolveNovaApiBaseUrl();
-  const nativeSvg = request.gptImageOutputFormat === 'svg';
-  const endpoint = nativeSvg ? '/v1/chat/completions' : request.mode === 'image-to-image'
+  const endpoint = request.mode === 'image-to-image'
     ? '/v1/images/edits'
     : '/v1/images/generations';
   const response = await fetchWithTimeout(
     `${baseUrl}${endpoint}`,
-    nativeSvg ? createNativeSvgRequest(apiKey, request, resolvedSize) : createGptImageRequestInit(apiKey, request, resolvedSize, options)
+    createGptImageRequestInit(apiKey, request, resolvedSize, options)
   );
-  return parseGptImageResponse(response, request.gptImageOutputFormat);
+  return parseGptImageResponse(response);
 }
 
 function getGrokResolution(outputSize) {
@@ -1802,7 +1794,8 @@ async function generateNovaImage(apiKey, request) {
   if (request.protocol === 'openai') {
     const resolvedSize = resolveOpenAiImageRequestSize(request);
     const antigravityGemini = isAntigravityGeminiImageModel(request.model);
-    if (!IMAGE_STREAM_ENABLED || antigravityGemini) {
+    const nativeOutput = request.gptImageOutputFormat === 'svg' || request.gptImageOutputFormat === 'gif';
+    if (!IMAGE_STREAM_ENABLED || antigravityGemini || nativeOutput) {
       return requestGptImage(apiKey, request, resolvedSize, { baseUrl });
     }
     try {
