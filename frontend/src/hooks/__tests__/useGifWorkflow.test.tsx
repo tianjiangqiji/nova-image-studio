@@ -8,6 +8,7 @@ import { loadGifTemplate, saveActiveGifJob } from '@/lib/gif-job-store';
 import { resolveImagePayloadToBlob } from '@/lib/image-actions';
 import { encodeGifFromGrid } from '@/lib/gif-encoder';
 import { inspectNativeGif } from '@/lib/native-gif';
+import { deleteStoredBlobs } from '@/lib/image-downloader';
 
 vi.mock('@/lib/ccode-task-client', () => ({ createNovaTask: vi.fn().mockResolvedValue('server-1'), ackNovaTask: vi.fn(), getNovaTask: vi.fn(), resolveImageTaskProvider: vi.fn((modelId: string) => ({ apiKey: 'test-key', baseUrl: 'https://custom.example.test', protocol: 'openai', modelId })) }));
 vi.mock('@/lib/ccode-task-socket', () => ({ novaTaskSocket: { subscribeTask: vi.fn(() => vi.fn()) } }));
@@ -44,7 +45,7 @@ describe('native GIF workflow', () => {
     const { result } = renderHook(useGifWorkflow);
     await act(async () => result.current.submitGrid(input));
     expect(loadGifTemplate).not.toHaveBeenCalled();
-    expect(createNovaTask).toHaveBeenCalledWith(expect.objectContaining({ mode: 'text-to-image', gptImageOutputFormat: 'gif', gifFrameCount: 20, gifFrameDurationMs: 200, outputSize: 'auto', images: [], baseUrl: 'https://custom.example.test', protocol: 'openai', model: input.model }));
+    expect(createNovaTask).toHaveBeenCalledWith(expect.objectContaining({ mode: 'text-to-image', gptImageOutputFormat: 'gif', gifFrameCount: 9, gifFrameDurationMs: 200, outputSize: 'auto', images: [], baseUrl: 'https://custom.example.test', protocol: 'openai', model: input.model }));
     await complete();
     await waitFor(() => expect(result.current.job?.resultFrameCount).toBe(2));
     expect(result.current.job?.status).toBe('done');
@@ -55,15 +56,43 @@ describe('native GIF workflow', () => {
   });
 
   it('preserves custom timing in requests, persisted jobs and retry inputs', async () => {
-    const custom = { ...input, gifFrameCount: 24, gifFrameDurationMs: 80 };
+    const custom = { ...input, gifFrameCount: 12, gifFrameDurationMs: 80 };
     const first = renderHook(useGifWorkflow);
     await act(async () => first.result.current.submitGrid(custom));
     await complete();
     first.unmount();
     const restored = renderHook(useGifWorkflow);
-    await waitFor(() => expect(restored.result.current.job).toMatchObject({ gifFrameCount: 24, gifFrameDurationMs: 80 }));
+    await waitFor(() => expect(restored.result.current.job).toMatchObject({ gifFrameCount: 12, gifFrameDurationMs: 80 }));
     await act(async () => restored.result.current.submitGrid({ ...input, ...restored.result.current.job! }));
-    expect(createNovaTask).toHaveBeenLastCalledWith(expect.objectContaining({ gifFrameCount: 24, gifFrameDurationMs: 80, gptImageOutputFormat: 'gif' }));
+    expect(createNovaTask).toHaveBeenLastCalledWith(expect.objectContaining({ gifFrameCount: 12, gifFrameDurationMs: 80, gptImageOutputFormat: 'gif' }));
+  });
+
+
+  it('rounds frame timing to GIF precision in requests and stored tasks', async () => {
+    const { result } = renderHook(useGifWorkflow);
+    await act(async () => result.current.submitGrid({ ...input, gifFrameCount: 16, gifFrameDurationMs: 25 }));
+    expect(createNovaTask).toHaveBeenLastCalledWith(expect.objectContaining({ gifFrameCount: 16, gifFrameDurationMs: 30 }));
+    expect(result.current.job).toMatchObject({ gifFrameCount: 16, gifFrameDurationMs: 30 });
+  });
+
+  it.each([
+    { gifFrameCount: 1 }, { gifFrameCount: 17 }, { gifFrameCount: 2.5 },
+    { gifFrameCount: Number.NaN }, { gifFrameDurationMs: 19 },
+    { gifFrameDurationMs: 2001 }, { gifFrameDurationMs: 20.5 },
+  ])('rejects invalid new native parameters before replacing an existing result: %j', async overrides => {
+    const { result } = renderHook(useGifWorkflow);
+    await act(async () => result.current.submitGrid(input));
+    await complete();
+    await waitFor(() => expect(result.current.gifBlob).toBe(gifBlob));
+    const previousJob = result.current.job;
+    vi.mocked(deleteStoredBlobs).mockClear();
+    await act(async () => {
+      await expect(result.current.submitGrid({ ...input, ...overrides })).rejects.toThrow(/GIF/);
+    });
+    expect(createNovaTask).toHaveBeenCalledOnce();
+    expect(deleteStoredBlobs).not.toHaveBeenCalled();
+    expect(result.current.job).toBe(previousJob);
+    expect(result.current.gifBlob).toBe(gifBlob);
   });
 
   it('ignores retained grid references and only sends text in native mode', async () => {
@@ -76,7 +105,7 @@ describe('native GIF workflow', () => {
 
   it.each([{ model: 'gpt-image-2.6-flare', nativeGif: false }, { model: 'gpt-image-2-pro', nativeGif: true }])('keeps manual grid generation for %j', async overrides => {
     const { result } = renderHook(useGifWorkflow);
-    await act(async () => result.current.submitGrid({ ...input, gifFrameCount: 24, gifFrameDurationMs: 80, ...overrides }));
+    await act(async () => result.current.submitGrid({ ...input, gifFrameCount: 12, gifFrameDurationMs: 80, ...overrides }));
     expect(loadGifTemplate).toHaveBeenCalledOnce();
     expect(vi.mocked(createNovaTask).mock.calls.at(-1)![0]).not.toHaveProperty('gifFrameCount');
     expect(vi.mocked(createNovaTask).mock.calls.at(-1)![0]).not.toHaveProperty('gifFrameDurationMs');

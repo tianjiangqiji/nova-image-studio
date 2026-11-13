@@ -1,12 +1,31 @@
-export const DEFAULT_NATIVE_GIF_FRAME_COUNT = 20;
+export const DEFAULT_NATIVE_GIF_FRAME_COUNT = 9;
 export const DEFAULT_NATIVE_GIF_FRAME_DURATION_MS = 200;
+export const MIN_NATIVE_GIF_FRAME_COUNT = 2;
+export const MAX_NATIVE_GIF_FRAME_COUNT = 16;
+export const MIN_NATIVE_GIF_FRAME_DURATION_MS = 20;
+export const MAX_NATIVE_GIF_FRAME_DURATION_MS = 2000;
+
+function isValidFrameCount(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+    && value >= MIN_NATIVE_GIF_FRAME_COUNT && value <= MAX_NATIVE_GIF_FRAME_COUNT;
+}
+
+function isValidFrameDuration(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value)
+    && value >= MIN_NATIVE_GIF_FRAME_DURATION_MS && value <= MAX_NATIVE_GIF_FRAME_DURATION_MS;
+}
+
+export function getNativeGifParamsError(frameCount: unknown, frameDurationMs: unknown): string | undefined {
+  if (!isValidFrameCount(frameCount)) return 'GIF 帧数须为 2–16 的整数。';
+  if (!isValidFrameDuration(frameDurationMs)) return 'GIF 每帧时长须为 20–2000 毫秒的整数。';
+  return undefined;
+}
 
 export function normalizeNativeGifParams(frameCount: unknown, frameDurationMs: unknown) {
-  const positiveInteger = (value: unknown, fallback: number) =>
-    typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : fallback;
   return {
-    gifFrameCount: positiveInteger(frameCount, DEFAULT_NATIVE_GIF_FRAME_COUNT),
-    gifFrameDurationMs: positiveInteger(frameDurationMs, DEFAULT_NATIVE_GIF_FRAME_DURATION_MS),
+    gifFrameCount: isValidFrameCount(frameCount) ? frameCount : DEFAULT_NATIVE_GIF_FRAME_COUNT,
+    gifFrameDurationMs: isValidFrameDuration(frameDurationMs)
+      ? Math.round(frameDurationMs / 10) * 10 : DEFAULT_NATIVE_GIF_FRAME_DURATION_MS,
   };
 }
 

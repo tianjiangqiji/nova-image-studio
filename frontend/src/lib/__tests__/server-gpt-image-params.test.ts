@@ -28,7 +28,7 @@ describe('backend GPT Image advanced params forwarding', () => {
   it('forwards quality/background/output_format without style in JSON generations', () => {
     expect(serverSource).toContain('quality: advancedParams.quality');
     expect(serverSource).toContain('background: advancedParams.background');
-    expect(serverSource).toContain("output_format: 'png'");
+    expect(serverSource).toContain("output_format: request.gptImageOutputFormat || 'png'");
     expect(serverSource).not.toContain('style: advancedParams.style');
   });
 

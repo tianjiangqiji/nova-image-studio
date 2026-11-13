@@ -31,9 +31,9 @@ it('serializes native GIF animation parameters to the backend', async () => {
     apiKey: 'test-key', baseUrl: 'https://example.test', protocol: 'openai', model: 'gpt-image-2.6-flare',
     mode: 'text-to-image', prompt: 'cat blinks', images: [], parallelCount: 1,
     outputSize: 'auto', aspectRatio: 'auto', temperature: 1,
-    gptImageOutputFormat: 'gif', gifFrameCount: 24, gifFrameDurationMs: 80,
+    gptImageOutputFormat: 'gif', gifFrameCount: 12, gifFrameDurationMs: 80,
   });
   expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
-    gptImageOutputFormat: 'gif', gifFrameCount: 24, gifFrameDurationMs: 80, images: [],
+    gptImageOutputFormat: 'gif', gifFrameCount: 12, gifFrameDurationMs: 80, images: [],
   });
 });

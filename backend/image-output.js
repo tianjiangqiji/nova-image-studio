@@ -37,45 +37,23 @@ function validateImageOutput(request) {
   const format = request.gptImageOutputFormat || 'png';
   if (!['png', 'svg', 'gif'].includes(format)) throw new Error('不支持的图片输出格式');
   if (format !== 'png' && (request.protocol !== 'openai' || !supportsNativeImageOutput(request.model))) throw new Error('原生 SVG/GIF 输出需要 GPT Image 2.6 系列模型');
-  if (format === 'gif' && (request.mode !== 'text-to-image' || request.images?.length)) throw new Error('原生 GIF 仅支持文字生成，不支持参考图');
+  if (format !== 'png' && (request.mode !== 'text-to-image' || request.images?.length)) {
+    throw new Error(`原生 ${format.toUpperCase()} 仅支持文字生成，不支持参考图`);
+  }
   if (format !== 'png' && request.gptImageMarkup) throw new Error('原生 SVG/GIF 模式暂不支持 Markup 标注，请切换回普通图片模式');
   if (format === 'gif') {
-    for (const [key, fallback] of [['gifFrameCount', 20], ['gifFrameDurationMs', 200]]) {
+    for (const [key, fallback, min, max] of [['gifFrameCount', 9, 2, 16], ['gifFrameDurationMs', 200, 20, 2000]]) {
       const value = request[key] === undefined ? fallback : request[key];
-      if (!Number.isSafeInteger(value) || value < 1) {
-        throw new Error(`${key === 'gifFrameCount' ? 'GIF 帧数' : 'GIF 每帧时长'}必须为正整数`);
+      if (!Number.isSafeInteger(value) || value < min || value > max) {
+        throw new Error(`${key === 'gifFrameCount' ? 'GIF 帧数' : 'GIF 每帧时长'}必须为 ${min}–${max} 之间的整数`);
       }
-      request[key] = value;
+      request[key] = key === 'gifFrameDurationMs' ? Math.round(value / 10) * 10 : value;
     }
   } else {
     delete request.gifFrameCount;
     delete request.gifFrameDurationMs;
   }
   return format;
-}
-
-// The current relay may wrap generated SVG code in a bad_request error when
-// it cannot find a raster attachment. Recover only this observed wrapper.
-function extractSvgPayload(payload, status = 200) {
-  const message = payload?.choices?.[0]?.message?.content;
-  let text = typeof message === 'string' ? message
-    : Array.isArray(message) ? message.map(part => part.text || '').join('\n') : '';
-  if (status === 400 && payload?.error?.code === 'bad_request'
-    && payload.error.type === 'invalid_request_error') text = payload.error.message || '';
-  if (typeof text !== 'string') return undefined;
-  return text.match(/<svg\b[\s\S]*?<\/svg\s*>/i)?.[0];
-}
-
-function createNativeSvgRequest(apiKey, request, size) {
-  const prompt = buildImageOutputPrompt(request) + (size ? `\nSVG 画布尺寸：${size} 像素，请设置对应的 width、height 和 viewBox。` : '');
-  const content = [{ type: 'text', text: prompt }, ...(request.images || []).map(img => ({
-    type: 'image_url', image_url: { url: `data:${img.mimeType};base64,${img.data}` },
-  }))];
-  return {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model: request.model, messages: [{ role: 'user', content: content.length === 1 ? prompt : content }], stream: false }),
-  };
 }
 
 function extractChatImagePayload(payload) {
@@ -95,13 +73,10 @@ function extractChatImagePayload(payload) {
 }
 
 function buildImageOutputPrompt(request) {
-  if (request.gptImageOutputFormat === 'svg') {
-    return `${request.prompt}\n\n请直接在回复正文中输出完整的 SVG 源码，从 <svg 开始，到 </svg> 结束。使用矢量路径和形状，不要嵌入位图。不要调用图片生成工具，不要返回 PNG、下载链接或 sandbox 文件路径。`;
-  }
   if (request.gptImageOutputFormat === 'gif') {
     return `${request.prompt}\n\n请生成并返回真正可播放的 GIF 动图文件，包含连续动画帧。不要返回静态图片、网格图、雪碧图或分镜拼图。`;
   }
   return request.prompt;
 }
 
-module.exports = { detectImageMime, decodeImagePayload, getImageExtension, isSvgText, validateImageOutput, buildImageOutputPrompt, extractSvgPayload, createNativeSvgRequest, extractChatImagePayload };
+module.exports = { detectImageMime, decodeImagePayload, getImageExtension, isSvgText, validateImageOutput, buildImageOutputPrompt, extractChatImagePayload };

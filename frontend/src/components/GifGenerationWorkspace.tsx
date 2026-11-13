@@ -40,7 +40,7 @@ import {
 
 import { MAX_UPLOAD_SIZE_BYTES } from '@/lib/constants';
 import { useGifWorkflow } from '@/hooks/useGifWorkflow';
-import { DEFAULT_NATIVE_GIF_FRAME_COUNT, DEFAULT_NATIVE_GIF_FRAME_DURATION_MS, normalizeNativeGifParams } from '@/lib/native-gif';
+import { DEFAULT_NATIVE_GIF_FRAME_COUNT, DEFAULT_NATIVE_GIF_FRAME_DURATION_MS, getNativeGifParamsError, normalizeNativeGifParams } from '@/lib/native-gif';
 import type { ImageActionPayload } from '@/lib/image-actions';
 import { getDefaultConfiguredTextModel } from '@/lib/model-endpoints';
 
@@ -429,10 +429,7 @@ export function GifGenerationWorkspace({ wideMode = false, hasApiKey, onConfigur
     }
   }, [workflow]);
 
-  const nativeParamsValid = !nativeGifActive || (
-    Number.isSafeInteger(gifFrameCount) && gifFrameCount > 0
-    && Number.isSafeInteger(gifFrameDurationMs) && gifFrameDurationMs > 0
-  );
+  const nativeParamsValid = !nativeGifActive || !getNativeGifParamsError(gifFrameCount, gifFrameDurationMs);
   const canSubmit = prompt.trim().length > 0 && !generating && hasApiKey && gifModelOptions.length > 0 && nativeParamsValid;
   const refImageCount = refFiles.length;
   const maxedOut = refImageCount >= GIF_MAX_REF_IMAGES;

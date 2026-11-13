@@ -3,7 +3,7 @@ const net = require('net');
 const { createHash, randomUUID, timingSafeEqual } = require('crypto');
 const { spawn } = require('child_process');
 const { validateGptImageMarkup } = require('./gpt-image-markup');
-const { detectImageMime, decodeImagePayload, getImageExtension, isSvgText, validateImageOutput, buildImageOutputPrompt, extractSvgPayload, createNativeSvgRequest, extractChatImagePayload } = require('./image-output');
+const { detectImageMime, decodeImagePayload, getImageExtension, isSvgText, validateImageOutput, buildImageOutputPrompt, extractChatImagePayload } = require('./image-output');
 const fs = require('fs');
 const path = require('path');
 const next = process.env.NODE_ENV !== 'production' ? require('next') : null;
@@ -769,11 +769,18 @@ function saveImageToDisk(taskId, itemIndex, subIndex, imageBuffer, mimeType) {
 }
 
 async function downloadUrlToDisk(taskId, itemIndex, subIndex, imageUrl) {
-  const response = await fetchWithTimeout(imageUrl, {});
-  if (!response.ok) throw new Error(`远程图片下载失败: ${response.status}`);
-  const contentType = response.headers.get('content-type') || 'image/png';
-  const buffer = Buffer.from(await response.arrayBuffer());
-  return saveImageToDisk(taskId, itemIndex, subIndex, buffer, contentType);
+  let response;
+  let stage = '结果下载';
+  try {
+    response = await fetchWithTimeout(imageUrl, {});
+    if (!response.ok) throw new Error('远程图片下载失败');
+    const contentType = response.headers.get('content-type') || 'image/png';
+    const buffer = Buffer.from(await response.arrayBuffer());
+    stage = '结果保存';
+    return saveImageToDisk(taskId, itemIndex, subIndex, buffer, contentType);
+  } catch (error) {
+    throw withImageErrorContext(error, stage, response);
+  }
 }
 
 function getTaskImageFiles(taskId) {
@@ -1048,6 +1055,47 @@ function normalizeError(error) {
   return message.length > 200 ? message.slice(0, 200) + '…' : message;
 }
 
+function withImageErrorContext(error, stage, response) {
+  const contextual = error instanceof Error ? error : new Error(String(error));
+  contextual.imageStage = stage;
+  if (response) {
+    contextual.upstreamStatus = response.status;
+    const requestId = response.headers.get('x-request-id') || response.headers.get('request-id');
+    if (requestId && /^[A-Za-z0-9_.:-]{1,128}$/.test(requestId)) {
+      contextual.upstreamRequestId = requestId;
+    }
+  }
+  return contextual;
+}
+
+function normalizeImageTaskError(error, stage, apiKey) {
+  const rawMessage = error instanceof Error ? error.message : String(error);
+  const message = rawMessage.split(apiKey).join('[已脱敏]')
+    .replace(/https?:\/\/[^\s<>"']+/gi, '[网址已隐藏]')
+    .replace(/\bBearer\s+[^\s,"';}]+/gi, 'Bearer [已脱敏]')
+    .replace(/(\b(?:authorization|x-api-key|api[-_]?key|access[-_]?token|refresh[-_]?token|token|password|secret)\b["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, '$1[已脱敏]')
+    .replace(/\bsk-[A-Za-z0-9_-]+/g, '[已脱敏]');
+  const code = error?.cause?.code || error?.code;
+  const networkCodes = new Set([
+    'ECONNRESET', 'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ETIMEDOUT', 'EPIPE',
+    'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT',
+    'UND_ERR_HEADERS_TIMEOUT', 'UND_ERR_BODY_TIMEOUT', 'CERT_HAS_EXPIRED',
+    'ERR_TLS_CERT_ALTNAME_INVALID', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+  ]);
+  const details = [];
+  if (Number.isInteger(error?.upstreamStatus) && error.upstreamStatus >= 100 && error.upstreamStatus <= 599) {
+    details.push(`HTTP ${error.upstreamStatus}`);
+  }
+  if (networkCodes.has(code)) details.push(code);
+  if (error?.upstreamRequestId && !error.upstreamRequestId.includes(apiKey) && !/\bsk-/i.test(error.upstreamRequestId)) {
+    details.push(`request-id: ${error.upstreamRequestId}`);
+  }
+  const reason = error?.upstreamStatus ? message.slice(0, 200) : normalizeError(new Error(message));
+  const gifHint = /\bGIF output is not enabled for this request\.?\s*$/i.test(message)
+    ? ' 当前服务未为此请求启用 GIF 输出，请联系服务商开通。' : '';
+  return `${error?.imageStage || stage}失败${details.length ? `（${details.join('；')}）` : ''}：${reason}${gifHint}`;
+}
+
 function validateEnumValue(value, validValues, fieldName) {
   if (value === undefined || value === null || value === '') return undefined;
   if (!validValues.has(value)) {
@@ -1267,8 +1315,9 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
   const prompt = buildImageOutputPrompt(request);
   const antigravityGemini = isAntigravityGeminiImageModel(request.model);
   const advancedParams = antigravityGemini ? null : getGptImageRequestAdvancedParams(request);
-  const stream = !antigravityGemini && request.gptImageOutputFormat !== 'gif' && Boolean(options.stream);
-  const partialImages = antigravityGemini
+  const nativeOutput = request.gptImageOutputFormat === 'svg' || request.gptImageOutputFormat === 'gif';
+  const stream = !antigravityGemini && !nativeOutput && Boolean(options.stream);
+  const partialImages = antigravityGemini || nativeOutput
     ? 0
     : Math.min(3, Math.max(0, Number(options.partialImages) || 0));
   const antigravityImageSize = antigravityGemini
@@ -1332,8 +1381,7 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
     if (advancedParams) {
       formData.append('quality', advancedParams.quality);
       formData.append('background', advancedParams.background);
-      if (!request.gptImageOutputFormat || request.gptImageOutputFormat === 'png') formData.append('output_format', 'png');
-      else formData.append('response_format', 'b64_json');
+      formData.append('output_format', 'png');
     }
     if (resolvedSize) formData.append('size', resolvedSize);
     request.images.forEach((img, index) => {
@@ -1367,8 +1415,7 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
     ...(advancedParams ? {
       quality: advancedParams.quality,
       background: advancedParams.background,
-      ...(!request.gptImageOutputFormat || request.gptImageOutputFormat === 'png'
-        ? { output_format: 'png' } : { response_format: 'b64_json' }),
+      output_format: request.gptImageOutputFormat || 'png',
     } : {}),
     ...(antigravityGemini ? {
       ...(resolvedSize ? { aspect_ratio: resolvedSize } : {}),
@@ -1376,12 +1423,10 @@ function createGptImageRequestInit(apiKey, request, resolvedSize, options = {}) 
       ...(antigravityImageSize ? { imageSize: antigravityImageSize, image_size: antigravityImageSize } : {}),
       response_format: 'b64_json',
     } : {}),
+    ...(nativeOutput ? { n: 1, stream: false } : {}),
     ...(request.gptImageOutputFormat === 'gif' ? {
-      output_format: 'gif',
-      frame_count: request.gifFrameCount ?? 20,
+      frame_count: request.gifFrameCount ?? 9,
       frame_duration_ms: request.gifFrameDurationMs ?? 200,
-      response_format: 'url',
-      stream: false,
     } : {}),
     ...(request.images.length > 0 ? { image: request.images.map(img => `data:${img.mimeType};base64,${img.data}`) } : {}),
   };
@@ -1563,16 +1608,12 @@ function extractImagePayloadFromEventStream(text) {
   throw new Error('响应中无图片数据');
 }
 
-async function parseGptImageResponse(response, outputFormat) {
+async function parseGptImageResponse(response) {
   const contentType = String(response.headers.get('content-type') || '').toLowerCase();
   if (response.ok && contentType.startsWith('image/') && !contentType.includes('svg')) {
     return `data:${contentType.split(';')[0]};base64,${Buffer.from(await response.arrayBuffer()).toString('base64')}`;
   }
   const responseText = await response.text();
-  if (outputFormat === 'svg' && (response.ok || response.status === 400)) {
-    const svg = extractSvgPayload(parseJsonSafely(responseText), response.status);
-    if (svg) return svg;
-  }
 
   if (!response.ok) {
     const errorText = getUpstreamErrorText(responseText, response.status);
@@ -1608,15 +1649,18 @@ function isImageStreamUnsupportedError(error) {
 
 async function requestGptImage(apiKey, request, resolvedSize, options = {}) {
   const baseUrl = options.baseUrl || resolveNovaApiBaseUrl();
-  const nativeSvg = request.gptImageOutputFormat === 'svg';
-  const endpoint = nativeSvg ? '/v1/chat/completions' : request.mode === 'image-to-image'
+  const endpoint = request.mode === 'image-to-image'
     ? '/v1/images/edits'
     : '/v1/images/generations';
   const response = await fetchWithTimeout(
     `${baseUrl}${endpoint}`,
-    nativeSvg ? createNativeSvgRequest(apiKey, request, resolvedSize) : createGptImageRequestInit(apiKey, request, resolvedSize, options)
+    createGptImageRequestInit(apiKey, request, resolvedSize, options)
   );
-  return parseGptImageResponse(response, request.gptImageOutputFormat);
+  try {
+    return await parseGptImageResponse(response);
+  } catch (error) {
+    throw withImageErrorContext(error, '生成请求', response);
+  }
 }
 
 function getGrokResolution(outputSize) {
@@ -1802,7 +1846,8 @@ async function generateNovaImage(apiKey, request) {
   if (request.protocol === 'openai') {
     const resolvedSize = resolveOpenAiImageRequestSize(request);
     const antigravityGemini = isAntigravityGeminiImageModel(request.model);
-    if (!IMAGE_STREAM_ENABLED || antigravityGemini) {
+    const nativeOutput = request.gptImageOutputFormat === 'svg' || request.gptImageOutputFormat === 'gif';
+    if (!IMAGE_STREAM_ENABLED || antigravityGemini || nativeOutput) {
       return requestGptImage(apiKey, request, resolvedSize, { baseUrl });
     }
     try {
@@ -1956,6 +2001,7 @@ function drainQueue() {
 }
 
 async function generateSingleImage(apiKey, request, taskId, index) {
+  let stage = '生成请求';
   try {
     const image = await generateNovaImage(apiKey, request);
     const expanded = image.startsWith('MULTI_URL:') ? image.substring(10).split('|||').map(url => `URL:${url}`) : [image];
@@ -1965,9 +2011,11 @@ async function generateSingleImage(apiKey, request, taskId, index) {
       const img = expanded[subIdx];
       let result;
       if (img.startsWith('URL:')) {
+        stage = '结果下载';
         const remoteUrl = img.substring(4);
         result = await downloadUrlToDisk(taskId, index, subIdx, remoteUrl);
       } else {
+        stage = '结果保存';
         const { bytes, mimeType } = decodeImagePayload(img);
         result = saveImageToDisk(taskId, index, subIdx, bytes, mimeType);
       }
@@ -1981,7 +2029,7 @@ async function generateSingleImage(apiKey, request, taskId, index) {
       .run(JSON.stringify(diskRefs), new Date().toISOString(), taskId, index);
     return { success: true, images: diskRefs, warnings };
   } catch (error) {
-    const message = normalizeError(error);
+    const message = normalizeImageTaskError(error, stage, apiKey);
     db.prepare("UPDATE task_items SET status = 'failed', error = ?, completed_at = ? WHERE task_id = ? AND item_index = ?")
       .run(message, new Date().toISOString(), taskId, index);
     return { success: false, error: message };

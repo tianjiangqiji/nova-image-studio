@@ -13,7 +13,7 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Input } from '@/components/ui/input';
-import { normalizeNativeGifParams } from '@/lib/native-gif';
+import { getNativeGifParamsError, MAX_NATIVE_GIF_FRAME_COUNT, MAX_NATIVE_GIF_FRAME_DURATION_MS, MIN_NATIVE_GIF_FRAME_COUNT, MIN_NATIVE_GIF_FRAME_DURATION_MS } from '@/lib/native-gif';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { AttachmentChips } from '@/components/AttachmentChips';
 import { GptImageAdvancedParamsControl } from '@/components/GptImageAdvancedParamsControl';
@@ -72,6 +72,9 @@ function formatModelLabel(model: GifModel, modelOptions: { value: GifModel; labe
 }
 
 export function GifParametersPanel(props: GifParametersPanelProps) {
+  const nativeParamsError = props.nativeGif
+    ? getNativeGifParamsError(props.gifFrameCount, props.gifFrameDurationMs) : undefined;
+
   if (props.disabled) {
     return (
       <div className="flex min-h-72 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-muted/40 px-4 py-8 text-center">
@@ -225,18 +228,18 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
             <div role="group" aria-label="原生 GIF 参数" className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
               <label className="flex items-center gap-1.5 whitespace-nowrap text-[11px] text-muted-foreground">
                 帧数
-                <Input type="number" min={1} step={1} aria-label="GIF 帧数"
+                <Input type="number" min={MIN_NATIVE_GIF_FRAME_COUNT} max={MAX_NATIVE_GIF_FRAME_COUNT} step={1} aria-label="GIF 帧数"
+                  aria-invalid={Boolean(nativeParamsError)}
                   value={Number.isFinite(props.gifFrameCount) ? props.gifFrameCount : ''}
                   onChange={event => props.onGifFrameCountChange(event.target.valueAsNumber)}
-                  onBlur={() => props.onGifFrameCountChange(normalizeNativeGifParams(props.gifFrameCount, props.gifFrameDurationMs).gifFrameCount)}
                   disabled={props.generating} className="h-6 w-16 rounded-md px-1.5 py-0 text-xs text-foreground md:text-xs" />
               </label>
               <label className="flex items-center gap-1.5 whitespace-nowrap text-[11px] text-muted-foreground">
                 每帧时长
-                <Input type="number" min={1} step={1} aria-label="GIF 每帧时长（毫秒）"
+                <Input type="number" min={MIN_NATIVE_GIF_FRAME_DURATION_MS} max={MAX_NATIVE_GIF_FRAME_DURATION_MS} step={10} aria-label="GIF 每帧时长（毫秒）"
+                  aria-invalid={Boolean(nativeParamsError)}
                   value={Number.isFinite(props.gifFrameDurationMs) ? props.gifFrameDurationMs : ''}
                   onChange={event => props.onGifFrameDurationMsChange(event.target.valueAsNumber)}
-                  onBlur={() => props.onGifFrameDurationMsChange(normalizeNativeGifParams(props.gifFrameCount, props.gifFrameDurationMs).gifFrameDurationMs)}
                   disabled={props.generating} className="h-6 w-20 rounded-md px-1.5 py-0 text-xs text-foreground md:text-xs" />
                 毫秒
               </label>
@@ -262,7 +265,7 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
               variant="ghost"
               size="icon"
               onClick={props.onOptimize}
-              disabled={!props.canSubmit}
+              disabled={!props.canSubmit || Boolean(nativeParamsError)}
               title="优化提示词"
             >
               <Sparkles className="h-4 w-4" />
@@ -280,7 +283,7 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
               variant="default"
               size="sm"
               onClick={props.onSubmit}
-              disabled={!props.canSubmit}
+              disabled={!props.canSubmit || Boolean(nativeParamsError)}
               className="gap-1"
             >
               {props.generating
@@ -290,8 +293,11 @@ export function GifParametersPanel(props: GifParametersPanelProps) {
             </Button>
           </div>
         </div>
+        {nativeParamsError && <p role="alert" className="mt-2 text-xs text-destructive">{nativeParamsError}</p>}
         <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-          2.6 模型支持原生 GIF 模式；网格模式需支持 3264×2448 自定义分辨率。
+          {props.nativeGif
+            ? '2–16 帧，每帧 20–2000 毫秒；时长按 10 毫秒取整。'
+            : '2.6 模型支持原生 GIF 模式；网格模式需支持 3264×2448 自定义分辨率。'}
         </p>
       </div>
     </div>

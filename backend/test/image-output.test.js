@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { decodeImagePayload, detectImageMime, extractSvgPayload, extractChatImagePayload, validateImageOutput } = require('../image-output');
+const { decodeImagePayload, detectImageMime, extractChatImagePayload, validateImageOutput } = require('../image-output');
 const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0L10 10"/></svg>';
 
 test('decodes raw, base64, percent-encoded and mislabeled SVG without rasterizing', () => {
@@ -10,14 +10,6 @@ test('decodes raw, base64, percent-encoded and mislabeled SVG without rasterizin
     assert.equal(result.bytes.toString(), svg);
   }
   assert.equal(detectImageMime(Buffer.from(`<?xml version="1.0"?>\n<!--vector-->${svg}`)), 'image/svg+xml');
-});
-
-test('recovers the observed SVG error wrapper but does not turn unrelated API errors into success', () => {
-  const error = { type: 'invalid_request_error', code: 'bad_request', message: `<CodeBlock language="xml">${svg}</CodeBlock>` };
-  assert.equal(extractSvgPayload({ error }, 400), svg);
-  assert.equal(extractSvgPayload({ error: { ...error, code: 'insufficient_quota' } }, 400), undefined);
-  assert.equal(extractSvgPayload({ error }, 401), undefined);
-  assert.equal(extractSvgPayload({ choices: [{ message: { content: `\`\`\`svg\n${svg}\n\`\`\`` } }] }), svg);
 });
 
 test('extracts chat media links and base64 while rejecting inaccessible sandbox paths', () => {
@@ -32,16 +24,27 @@ test('native GIF animation parameters default only when absent and reject invali
   const base = { model: 'gpt-image-2.6-flare', protocol: 'openai', mode: 'text-to-image', images: [], gptImageOutputFormat: 'gif' };
   const defaults = { ...base };
   assert.equal(validateImageOutput(defaults), 'gif');
-  assert.equal(defaults.gifFrameCount, 20);
+  assert.equal(defaults.gifFrameCount, 9);
   assert.equal(defaults.gifFrameDurationMs, 200);
-  const custom = { ...base, gifFrameCount: 24, gifFrameDurationMs: 80 };
+  const custom = { ...base, gifFrameCount: 16, gifFrameDurationMs: 81 };
   validateImageOutput(custom);
-  assert.equal(custom.gifFrameCount, 24);
+  assert.equal(custom.gifFrameCount, 16);
   assert.equal(custom.gifFrameDurationMs, 80);
   for (const key of ['gifFrameCount', 'gifFrameDurationMs']) {
     for (const value of [null, 0, -1, 1.5, '20', NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
-      assert.throws(() => validateImageOutput({ ...base, [key]: value }), /正整数/);
+      assert.throws(() => validateImageOutput({ ...base, [key]: value }), /之间的整数/);
     }
+  }
+  for (const value of [1, 17, 20]) {
+    assert.throws(() => validateImageOutput({ ...base, gifFrameCount: value }), /2–16/);
+  }
+  for (const value of [19, 2001]) {
+    assert.throws(() => validateImageOutput({ ...base, gifFrameDurationMs: value }), /20–2000/);
+  }
+  for (const [value, rounded] of [[20, 20], [85, 90], [1999, 2000], [2000, 2000]]) {
+    const request = { ...base, gifFrameDurationMs: value };
+    validateImageOutput(request);
+    assert.equal(request.gifFrameDurationMs, rounded);
   }
   assert.throws(() => validateImageOutput({ ...base, model: 'gpt-image-2.5-flare' }), /2.6/);
   for (const format of ['png', 'svg']) {
@@ -50,4 +53,13 @@ test('native GIF animation parameters default only when absent and reject invali
     assert.equal(request.gifFrameCount, undefined);
     assert.equal(request.gifFrameDurationMs, undefined);
   }
+});
+
+test('native SVG rejects edits and references before submitting an upstream request', () => {
+  const base = { model: 'gpt-image-2.6-sunburst', protocol: 'openai', mode: 'text-to-image', images: [], gptImageOutputFormat: 'svg' };
+  assert.equal(validateImageOutput({ ...base }), 'svg');
+  for (const overrides of [{ mode: 'image-to-image' }, { images: [{ data: 'ref' }] }]) {
+    assert.throws(() => validateImageOutput({ ...base, ...overrides }), /SVG 仅支持文字生成/);
+  }
+  assert.throws(() => validateImageOutput({ ...base, gptImageMarkup: { data: 'markup' } }), /Markup/);
 });
